@@ -1,0 +1,10 @@
+node_modules/
+dist-companion/
+dist/
+build
+supabase
+vendor
+*.bak-*
+*.log
+.env
+companion/debug/

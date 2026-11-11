@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+  <title>Nūs Companion</title>
+  <link rel="stylesheet" href="styles.css?v=knot-day1" />
+  <link rel="stylesheet" href="knot-look.css?v=knot-day1" />
+  <link rel="stylesheet" href="pill.css?v=knot-day1" />
+</head>
+<body>
+  <!-- The strand: the Knot's thread across the screen. The engine sizes it
+       to the path it draws; it never takes the mouse. The Knot and the
+       bubbles are the only clickable pixels. -->
+  <canvas id="strand-layer" data-task="" aria-hidden="true"></canvas>
+
+  <!-- Guide bubble at the thread tip, and the one-tap consent chip after a
+       session. Both are DOM so the text stays crisp at any zoom. -->
+  <div id="guide-bubble" class="glass no-drag hidden" role="status" aria-live="polite">
+    <div class="gb-kicker" id="gb-kicker"></div>
+    <div class="gb-text" id="gb-text"></div>
+    <div class="gb-hint" id="gb-hint"></div>
+    <ol class="gb-steps hidden" id="gb-steps" aria-label="Steps"></ol>
+    <div class="gb-actions" id="gb-actions"></div>
+  </div>
+  <!-- The quick ask: one quiet line by the Knot. Click the Knot, type, Enter.
+       Voice is optional; this is the everyday path. -->
+  <div id="quick-ask" class="glass no-drag hidden" role="dialog" aria-label="Ask Nūs">
+    <input id="quick-input" type="text" placeholder="What do you need help with?" spellcheck="false" autocomplete="off" />
+    <button id="quick-more" type="button" title="Open the full sheet" aria-label="Open the full sheet">&#8943;</button>
+  </div>
+  <!-- App hint: three words by the Knot when the front app has kept
+       walkthroughs. The Knot loosens a little; no thread until asked. -->
+  <button id="knot-hint" class="glass no-drag hidden" type="button" aria-live="polite"></button>
+  <div id="keep-chip" class="glass no-drag hidden" role="dialog" aria-label="Remember this for next time?">
+    <span id="keep-text">Remember this for next time?</span>
+    <button id="keep-yes" type="button">Keep</button>
+    <button id="keep-no" type="button">Skip</button>
+  </div>
+
+  <div id="app" data-corner="br">
+    <!-- Corner stack: tiles on the screen-centre side of the Knot -->
+    <div id="stack">
+
+    <!-- Tiles appear above the orb only when there is something to show -->
+    <div id="panel-wrap">
+      <div id="panel" class="no-drag collapsed">
+        <div id="tile-response" class="glass tile">
+          <div id="messages"></div>
+        </div>
+
+        <div id="tile-controls" class="glass tile">
+        <!-- The one always-on verb. Everything else appears only in context. -->
+        <!-- Desktop only: the standalone Companion has no plan source yet, so the
+             verb would answer with an empty plan. -->
+        <div id="primary-row" data-desktop-only>
+          <button class="act primary" data-mode="guide" data-icon="compass"><span class="ic"></span><span>What should I do?</span></button>
+        </div>
+
+        <!-- Only while listening: these buttons are dead without a live capture.
+             Desktop only: the meeting tools are not part of the standalone Companion. -->
+        <div class="mode-cluster hidden" id="live-cluster" data-desktop-only>
+          <div class="cluster-kicker">Live call</div>
+          <div id="action-row">
+          <button class="act" data-mode="assist" data-icon="sparkles"><span class="ic"></span><span>Assist</span></button>
+          <button class="act" data-mode="say" data-icon="wand-sparkles"><span class="ic"></span><span>Say next</span></button>
+          <button class="act" data-mode="objection" data-icon="shield-alert"><span class="ic"></span><span>Objection</span></button>
+          <button class="act" data-mode="numbers" data-icon="hash"><span class="ic"></span><span>Numbers</span></button>
+          <button class="act" data-mode="followup" data-icon="message-circle"><span class="ic"></span><span>Follow-ups</span></button>
+          <button class="act" data-mode="recap" data-icon="refresh-cw"><span class="ic"></span><span>Recap</span></button>
+        </div>
+        </div>
+
+        <!-- Only when a briefing pack is set: packs come from the vault. -->
+        <div class="mode-cluster hidden" id="rehearsal-cluster">
+          <div class="cluster-kicker">Rehearsal</div>
+          <div id="action-row-2">
+          <button class="act" data-mode="brief" data-icon="file-text"><span class="ic"></span><span>Pre-call brief</span></button>
+          <button class="act" id="spar-btn" data-mode="spar" data-icon="swords"><span class="ic"></span><span>Start rehearsal</span></button>
+          <button class="act" data-mode="score" data-icon="clipboard-check"><span class="ic"></span><span>Score me</span></button>
+        </div>
+        </div>
+
+        <div id="composer">
+          <div id="input-area">
+            <div id="placeholder">Ask Nūs anything<span data-desktop-only>, or <span class="keycap">⌘</span><span class="keycap">⏎</span> for What should I do?</span></div>
+            <textarea id="input" rows="1" spellcheck="false"></textarea>
+          </div>
+          <div id="composer-bottom">
+            <button id="more-btn" class="more-btn" title="Settings"></button>
+            <div class="spacer"></div>
+            <button id="send-btn" title="Send"></button>
+          </div>
+        </div>
+        </div><!-- /tile-controls -->
+      </div>
+    </div>
+
+    <!-- Once a day the Knot speaks first: the top ranked next move, rendered
+         locally with no key. Click it to open the full answer. -->
+    <button id="daily-line" class="glass no-drag hidden" type="button" data-desktop-only></button>
+
+    <!-- The Nūs Knot: alive at rest, state controls on hover, command sheet on click. -->
+    <div id="toolbar">
+      <div id="knot-shell">
+        <div id="knot-bloom" class="no-drag" aria-label="Nūs controls">
+          <div class="knot-bloom-head">
+            <div class="knot-copy">
+              <strong id="knot-status-title">Nūs idle</strong>
+              <span id="knot-status-subtitle">Quietly available</span>
+            </div>
+            <span data-desktop-only id="desktop-link" class="off" title="Connected to your Nūs desktop">◈ desktop</span>
+            <span id="share-state" class="hidden" title="Whether the Companion is excluded from screen shares and recordings (best effort)"></span>
+            <div id="capture-chip" class="off" aria-live="polite">
+              <span class="capture-dot"></span>
+              <div id="voice-wave" class="voice-wave" aria-hidden="true"></div>
+              <span id="capture-clock">00:00</span>
+            </div>
+          </div>
+          <div class="knot-bloom-foot">
+            <div class="spacer"></div>
+            <div id="orb-controls">
+              <button id="stop-btn" title="Start / stop listening" aria-label="Start or stop listening" data-desktop-only></button>
+              <button id="logo-btn" title="Help / tutorial" aria-label="Open tutorial"></button>
+              <!-- Where the Knot lives: wherever you drag it. It stays put. -->
+            </div>
+          </div>
+        </div>
+
+        <button id="orb" class="no-drag" type="button" title="Open Nūs (drag to move)" aria-label="Open Nūs command sheet" aria-expanded="false">
+          <span class="knot-halo" aria-hidden="true"></span>
+          <canvas id="knot-canvas" aria-hidden="true"></canvas>
+          <svg class="nus-knot" viewBox="0 0 88 88" aria-hidden="true">
+            <circle class="knot-orbit orbit-a" cx="44" cy="44" r="34"></circle>
+            <circle class="knot-orbit orbit-b" cx="44" cy="44" r="27"></circle>
+            <g class="knot-threads">
+              <path class="knot-thread knot-shadow" d="M18 39C20 19 39 12 55 20C72 29 72 50 58 61C44 73 22 65 20 49C18 36 28 26 40 27C53 27 62 38 58 49C54 61 38 64 29 55"></path>
+              <path class="knot-thread knot-cream" d="M17 47C13 29 28 15 45 17C63 19 72 37 64 52C57 66 38 70 26 60C15 51 16 35 26 27C37 18 54 23 59 36C64 48 54 60 42 60"></path>
+              <path class="knot-thread knot-blue" d="M27 68C42 75 62 68 68 52C74 36 64 18 47 15C31 12 17 23 16 38C15 52 27 63 40 62C53 61 61 50 58 39C55 29 44 24 35 28"></path>
+              <path class="knot-thread knot-glint" d="M24 27C34 16 51 15 62 25C74 36 71 54 59 63"></path>
+            </g>
+            <circle class="knot-core" cx="44" cy="44" r="4.2"></circle>
+          </svg>
+          <span id="live-dot" class="off"></span>
+        </button>
+      </div>
+    </div>
+
+    </div><!-- /stack -->
+  </div>
+
+  <!-- Settings -->
+  <div id="settings-scrim" class="hidden">
+    <div id="settings" class="glass">
+      <div class="s-head">
+        <div class="s-title">Settings</div>
+        <button id="s-close" class="s-close">Done</button>
+      </div>
+      <div class="s-body">
+        <div data-desktop-only id="nus-link-status" class="nus-link-status">Checking Nūs desktop context…</div>
+
+        <label class="s-label" data-standalone-only>TypeSafe key <span class="s-hint">for Jev, the voice-to-action layer · typesafe.ai</span></label>
+        <div class="s-field" data-standalone-only><span>TypeSafe</span><input id="key-typesafe" type="password" autocomplete="off" /></div>
+        <p class="s-note" data-standalone-only>Settings on the dashboard also has the live talk key, privacy choices, and speech model status.</p>
+        <label class="s-label">Gemini API key <span class="s-hint">free at aistudio.google.com/apikey · stored locally and encrypted</span></label>
+        <p class="s-note" data-desktop-only>Only needed for AI answers and listening: <b>"What should I do?" works with no key at all</b>, straight from your semester. One free Gemini key covers both answers and speech-to-text. Also settable in the desktop app under Settings, Companion AI key.</p>
+        <div class="s-field"><span>Gemini</span><input id="key-gemini" type="password" placeholder="AQ... or AIza..." autocomplete="off" /></div>
+        <div class="s-field nus-share-field"><span>Smart answers <small>Off by default. On: every reply uses the slower, stronger model.</small></span><input id="smart-mode" type="checkbox" /></div>
+        <div class="s-field nus-share-field"><span>Speak replies <small>Off by default. On: answers are read aloud with the system voice.</small></span><input id="speak-replies" type="checkbox" /></div>
+
+        <label class="s-label" data-desktop-only>Ask shortcut <span class="s-hint">runs "What should I do?" from anywhere</span></label>
+        <div class="s-shortcut" data-desktop-only>
+          <span>Ask</span>
+          <button id="shortcut-assist" class="shortcut-record" type="button" aria-label="Change Ask shortcut"></button>
+          <button id="shortcut-reset" class="shortcut-reset" type="button">Reset</button>
+        </div>
+        <div class="shortcut-hint" id="shortcut-hint" data-desktop-only>Click the shortcut, then press a new key combination.</div>
+
+        <details class="s-more">
+          <summary>Use a different provider</summary>
+          <div class="s-seg" id="provider-seg">
+            <button data-provider="gemini">Gemini</button>
+            <button data-provider="openai">OpenAI</button>
+            <button data-provider="anthropic">Anthropic</button>
+            <button data-provider="nvidia">Nvidia</button>
+          </div>
+          <div class="s-field"><span>OpenAI</span><input id="key-openai" type="password" placeholder="sk-..." autocomplete="off" /></div>
+          <div class="s-field"><span>Anthropic</span><input id="key-anthropic" type="password" placeholder="sk-ant-..." autocomplete="off" /></div>
+          <div class="s-field"><span>Nvidia</span><input id="key-nvidia" type="password" placeholder="nvapi-..." autocomplete="off" /></div>
+          <label class="s-label">Models <span class="s-hint">fast = Smart off · smart = Smart on</span></label>
+          <div class="s-field"><span>Fast</span><input id="model-fast" type="text" autocomplete="off" /></div>
+          <div class="s-field"><span>Smart</span><input id="model-smart" type="text" autocomplete="off" /></div>
+        </details>
+
+        <details class="s-more">
+          <summary>Privacy and sessions</summary>
+          <div data-desktop-only class="s-field nus-share-field"><span>Let the Knot read your semester when answering with AI <small>Off by default. On: your courses, tasks, and deadlines ride along to your chosen AI provider so answers can reference them. Off: the "What should I do?" tile still works fully on this machine.</small></span><input id="share-nus-context" type="checkbox" /></div>
+          <div data-desktop-only class="s-field nus-share-field"><span>Report answers back to the Nūs desktop brain <small>Off by default. Saves finished answers to a local file the Nūs desktop app reads. Stays on this machine.</small></span><input id="report-to-nus" type="checkbox" /></div>
+          <div data-desktop-only class="s-field nus-share-field"><span>Save transcripts to history <small>On by default. Every capture session lands in the desktop app, searchable and uploadable to your Nūs vault from the Knot section.</small></span><input id="persist-transcripts" type="checkbox" /></div>
+          <div class="s-field nus-share-field"><span>Keep session audio <small>Off by default. Retains voice-activated WAV audio per session for 30 days. Audio is the storage-heavy part.</small></span><input id="save-audio" type="checkbox" /></div>
+          <div class="s-field nus-share-field" data-founder><span>Full stealth when hidden <small>Off by default. Hiding the overlay (Ctrl+Shift+Space) also hides the tray icon: no on-screen sign of the Companion, and capture keeps running. Bring it back from the Companion pane in the desktop app. You are responsible for recording consent where you meet.</small></span><input id="stealth-mode" type="checkbox" /></div>
+        </details>
+
+        <details class="s-more" data-founder data-general-tools>
+          <summary>Rehearsal and briefing packs</summary>
+          <p class="s-note">Packs are built by the vault: python scripts/build_briefing.py &lt;slug&gt;. Turn Speak replies OFF before a real call.</p>
+          <div class="s-field"><span>Live pack</span><input id="pack-path" type="text" spellcheck="false" autocomplete="off" placeholder="...\nus\briefings\your-meeting\pack.md" /></div>
+          <div class="s-field"><span>Spar pack</span><input id="spar-path" type="text" spellcheck="false" autocomplete="off" placeholder="...\nus\briefings\your-meeting\spar.md" /></div>
+          <div class="s-resume-actions"><span class="s-hint" id="pack-status">No pack loaded.</span><button id="reload-pack" type="button">Reload packs</button></div>
+        </details>
+
+        <details class="s-more" data-founder data-general-tools>
+          <summary>Résumé</summary>
+          <label class="s-label" for="resume-context">Résumé / professional background <span class="s-hint">stored locally; sent to your selected provider with each request</span></label>
+          <textarea id="resume-context" class="s-textarea" maxlength="12000" placeholder="Paste your résumé or professional background here. Nūs will use it as the factual source for career-related answers."></textarea>
+          <div class="s-resume-actions"><span class="s-hint">Maximum 12,000 characters</span><button id="clear-resume" type="button">Clear résumé</button></div>
+        </details>
+
+        <div class="s-status" id="s-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- The first-run tour: the Knot's own sheet on its tail, eleven cards over the
+       person's real screen (companion/src/tour.js). While a demo has the
+       screen the sheet tucks into one line at the bottom left. -->
+  <div id="tour" class="glass no-drag hidden" role="dialog" aria-label="The tour">
+    <div class="tr-head"><span class="tr-kicker" id="tr-kicker"></span><span class="tr-dots" id="tr-dots"></span></div>
+    <div class="tr-progress hidden" id="tr-progress" aria-live="polite"></div>
+    <div class="tr-title" id="tr-title"></div>
+    <div class="tr-body" id="tr-body"></div>
+    <div class="tr-mid" id="tr-mid"></div>
+    <div class="tr-status" id="tr-status" role="status" aria-live="polite"></div>
+    <div class="tr-actions" id="tr-actions"></div>
+    <button id="tr-skip" class="tr-skip" type="button">Skip the tour</button>
+  </div>
+  <div id="tour-tuck" class="glass no-drag hidden" role="status"></div>
+
+  <script src="knot-spec.js?v=knot-day1"></script>
+  <script src="knot-engine.js?v=knot-day1"></script>
+  <script src="surface.js?v=knot-day1"></script>
+  <script src="task-panel.js?v=knot-day1"></script>
+  <script src="pill.js?v=knot-day1"></script>
+  <script src="quick-options.js?v=knot-day1"></script>
+  <script src="knot-menu.js?v=knot-day1"></script>
+  <script src="cue-samples.js?v=knot-day1"></script>
+  <script src="cues.js?v=knot-day1"></script>
+  <script src="icons.js?v=knot-day1"></script>
+  <script src="speakable.js?v=knot-day1"></script>
+  <script src="touch-forward.js?v=knot-day1"></script>
+  <script src="renderer.js?v=knot-day1"></script>
+</body>
+</html>
