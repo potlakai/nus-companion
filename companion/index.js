@@ -938,6 +938,15 @@ function maybeAskFeedback(reason) {
     }
   }, 900);
 }
+// publik API's empty balance (402): the bubble's one extra button opens Publik's one top-up link.
+let publikTopUp = null;
+function publikTopUpAction(e) {
+  let r = null;
+  try { r = require('./src/publik').readError(e); } catch (_) { r = null; }
+  if (!r || r.kind !== 'balance' || !r.url || !/^https:\/\//.test(r.url)) return [];
+  publikTopUp = r.url;
+  return [{ id: 'publik-topup', label: 'Top up' }];
+}
 function feedbackAction(id) {
   const fb = hooks.feedback;
   if (!fb) return;
@@ -1678,6 +1687,7 @@ function registerIpc() {
     if (p && p.action === 'open' && activeNudge) { if (hooks.showDesktop) hooks.showDesktop(); endNudge('open'); return; }
     if (p && p.action === 'notnow' && activeNudge) { endNudge('notnow'); return; }
     if (p && p.action === 'walk' && selection) { walkFromSelection(); return; }
+    if (p && p.action === 'publik-topup') { if (publikTopUp) shell.openExternal(publikTopUp).catch(() => {}); return; }
     if (p && p.action && /^fb-/.test(String(p.action))) { feedbackAction(String(p.action)); return; }
     if (p && p.action && /^nt-/.test(String(p.action))) { channelAction(String(p.action)); return; }
     if (p && p.action && /^rt-/.test(String(p.action))) { retentionAction(String(p.action)); return; }
@@ -3679,7 +3689,7 @@ function tourAskAi() {
   const T = tour;
   Promise.resolve().then(() => hooks.tourAi()).then((r) => {
     if (!r || tour !== T) return;
-    T.caps.cli = !!r.cli; T.caps.keyReady = !!r.key; T.caps.source = !!(r.cli || r.key);
+    T.caps.cli = !!r.cli; T.caps.keyReady = !!r.key; T.caps.publik = !!r.publik; T.caps.source = !!(r.cli || r.key);
   }).catch((e) => routeLog('tour: ai status: ' + e.message));
 }
 function tourPublicState() {
@@ -4347,7 +4357,7 @@ async function answerPlain(text, source, heardAt, opts = {}) {
     // The raw text goes to the log and to "Tell Pranav"; the bubble says what to do.
     lastFailure = String(e.message || e).slice(0, 160);
     console.log('[answer] ' + (llm && llm.provider || '') + ' failed: ' + String(e.message || e).slice(0, 400));
-    send('guide:bubble', { text: plainAskError(llm && llm.provider, e), anchor: 'knot', task: 'ask', kind: 'error', actions: [{ id: 'dismiss', label: 'OK', primary: true }, ...(hooks.feedback ? [{ id: 'fb-error', label: 'Tell Pranav' }] : [])], sessionId: null });
+    send('guide:bubble', { text: plainAskError(llm && llm.provider, e), anchor: 'knot', task: 'ask', kind: 'error', actions: [{ id: 'dismiss', label: 'OK', primary: true }, ...publikTopUpAction(e), ...(hooks.feedback ? [{ id: 'fb-error', label: 'Tell Pranav' }] : [])], sessionId: null });
   } finally {
     state.busy = false;
     restoreKnotState();

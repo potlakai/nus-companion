@@ -1,9 +1,13 @@
 const base = require('./electron-builder.config.js');
+// The publik switch: Sign in with publik, usage counting and publik API (companion/src/publik).
+// true for the build listed on publik. false builds the Companion as it was in 0.1.16: no gate,
+// no publik provider, and the folder and the app token stay out of the installer.
+const PUBLIK = true;
 module.exports = {
   appId: 'com.nus.companion',
   productName: 'Nus Companion',
   copyright: base.copyright,
-  extraMetadata: { name: 'nus-companion', version: '0.1.16', main: 'src/main-companion.js',
+  extraMetadata: { name: 'nus-companion', version: '0.1.18', main: 'src/main-companion.js', publik: PUBLIK,
     description: 'Nūs Companion: the Knot that hears you and acts, on its own.' },
   directories: { output: 'dist-companion', buildResources: 'build' },
   // companion/** carries companion/src/stats.js (anonymous usage stats, plain
@@ -15,6 +19,8 @@ module.exports = {
     // Developer-only checks and the unused 3D Knot stay out of the asar.
     '!companion/verify-focus-guard.cjs', '!companion/renderer/knot3d.js',
     '!renderer/**', '!src/config.js', '!electron-builder*.config.js',
+    // publik: the module finds publik-app-token.txt in its folder or a parent (the asar root).
+    ...(PUBLIK ? ['publik-app-token.txt'] : ['!companion/src/publik/**']),
     '!node_modules/@supabase/**', '!node_modules/electron-updater/**',
     // Local embeddings (companion/src/recall/embed.js): the Windows x64 runtime only.
     '!node_modules/onnxruntime-node/bin/napi-v*/darwin/**', '!node_modules/onnxruntime-node/bin/napi-v*/linux/**', '!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**',

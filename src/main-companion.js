@@ -54,6 +54,8 @@ const { createOneClick } = require('../companion/src/one-click');
 const getStarted = require('../companion/src/get-started');
 const tourMod = require('../companion/src/tour');
 const userData = app.getPath('userData');
+// Sign in with publik (companion/src/publik): one build switch, one folder. Off, none of it loads.
+const publik = (() => { try { const p = require('../companion/src/publik'); return p.on() ? p : null; } catch { return null; } })();
 const routinesFile = path.join(userData, 'reflex-routines.json');
 const notesFile = path.join(userData, 'companion', 'notes.md');
 const homeFile = path.join(__dirname, '..', 'companion', 'home', 'index.html');
@@ -347,7 +349,9 @@ function handle(channel, fn) {
 }
 function registerHomeIpc() {
   // The first window paints the stats notice: one step, counted once.
-  handle('home:status', async () => ({ ...companion.status(), ai: await ai.status(), llmReady: createLLM(store.getSettings()).ready, version: companionVersion(),
+  // Who answers, publik or the person's own key (Settings, Keys). Only in a publik build.
+  handle('home:publik:choice', (choice) => { if (publik) publik.setChoice(String(choice || '')); return { choice: publik ? publik.choice() : null }; });
+  handle('home:status', async () => ({ ...companion.status(), ai: await ai.status(), llmReady: createLLM(store.getSettings()).ready, publik: publik ? { on: true, choice: publik.choice() } : { on: false }, version: companionVersion(),
     ...(stats.status().firstRun ? (stats.onboardingStep('stats_notice_seen'), {}) : {}),
     hotkeys: { ptt: companion.status().ptt.accelerator, assist: store.getSettings().shortcuts.assist, select: 'Ctrl+Shift+T', toggle: 'Ctrl+Shift+Space', panic: 'Ctrl+Shift+X' },
     displays: screen.getAllDisplays().map(d => ({ id: d.id, label: d.label || d.size.width + ' × ' + d.size.height })),
@@ -514,6 +518,13 @@ app.on('activate', () => { if (databaseReady) openHome(); });
 app.whenReady().then(async () => {
   const exam = await examGuard.check();
   if (exam) { standDown(exam); return; }
+  // Publik's gate: before any screen the Companion owns (the Knot, the dashboard, the tour).
+  // There is no way past it but signing in; PUBLIK_SELF_TEST=1 prints the module's line and exits.
+  if (publik) {
+    const ui = require('../companion/src/publik/gate-window').createGateUI({ updating: fs.existsSync(path.join(userData, 'companion-settings.json')), icon: path.join(__dirname, '..', 'companion', 'tray-icon.png') });
+    await publik.module.ensureSignedIn(ui);
+    ui.close();
+  }
   examGuard.watch();
   const database = await open(path.join(userData, 'data'));
   databaseReady = true;
@@ -561,7 +572,7 @@ app.whenReady().then(async () => {
     // Card 7: who answers, as this process knows it (Claude Code on the path,
     // or a saved key that createLLM accepts), and the same one-word key check
     // the dashboard's Keys card runs.
-    tourAi: async () => ({ cli: !!(await ai.status()).cli, key: createLLM(store.getSettings()).ready }),
+    tourAi: async () => ({ cli: !!(await ai.status()).cli, key: createLLM(store.getSettings()).ready, publik: !!(publik && publik.active()) }),
     tourTestKey: which => testKeys(String(which || '')),
     tourSaveKey: (kind, key) => settingsPatch({ apiKeys: { [kind]: String(key || '') } }),
     // Card 10: the dashboard on the far side of the screen from the Knot, and

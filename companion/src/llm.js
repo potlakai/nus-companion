@@ -177,11 +177,30 @@ async function completeGemini({ apiKey, model, system, turns, imageDataUrl, maxT
   return (res && typeof res.text === 'string') ? res.text : (res && res.text) || '';
 }
 
+// publik API (companion/src/publik): only in a build with the publik switch on, and only when the
+// person picked "Connect your plan". Same OpenAI-compatible path as above, tier names only.
+let publik = null;
+try { publik = require('./publik'); } catch (_) { publik = null; }
+function publikLLM() {
+  const p = publik.provider();
+  const tierOf = (s) => (s && s.smart ? 'smart' : 'fast');
+  return (settings) => {
+    const model = publik.model(tierOf(settings));
+    const run = (args) => streamOpenAI({ ...args, apiKey: p.apiKey, baseURL: p.baseURL, imageDataUrl: args.imageDataUrl ? publik.prepareImage(args.imageDataUrl) : args.imageDataUrl });
+    return {
+      provider: 'publik', model, apiKey: p.apiKey, ready: true,
+      stream: (params) => run({ maxTokens: 4096, ...params, model }),
+      complete: (params) => run({ maxTokens: params.maxTokens || 512, ...params, model: publik.model(tierOf(settings), params.model), onToken: params.onToken || params.onDelta || (() => {}) }),
+    };
+  };
+}
+
 function createLLM(settings) {
   // NUS_COMPANION_CLAUDE_API=1 (launch-day1.ps1 -ClaudeApi): Claude through the
   // ANTHROPIC_API_KEY already in the environment, whatever the settings say.
   // Opt-in because it spends API credits; the key is never written to settings.
   const envClaude = process.env.NUS_COMPANION_CLAUDE_API === '1' && !!process.env.ANTHROPIC_API_KEY;
+  if (!envClaude && publik && publik.active()) return publikLLM()(settings);
   const provider = envClaude ? 'anthropic' : settings.provider;
   const keys = settings.apiKeys || {};
   const apiKey = envClaude ? process.env.ANTHROPIC_API_KEY : keys[provider];

@@ -180,9 +180,10 @@
     }
     $('#cli-state').textContent=status.ai.cli?'Found':'Not found';$('#cli-state').classList.toggle('set',!!status.ai.cli);
     $('#claude-status').textContent=status.ai.cli?'Claude Code is installed. If it is signed in, it answers and points with no key.':'Not installed. Not needed if you have a Gemini, Nvidia or Anthropic key.';
-    const voiceOk=!!status.reflex.key, answersOk=!!(s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
+    const pub=status.publik||{on:false},viaPublik=!!(pub.on&&pub.choice==='publik');$('#publik-row').hidden=!pub.on;$('#use-own-key').checked=!viaPublik;
+    const voiceOk=!!status.reflex.key, answersOk=!!(viaPublik||s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
     $('#step-voice').textContent=voiceOk?'Ready':'Not set';$('#step-voice').classList.toggle('set',voiceOk);
-    $('#step-answers').textContent=answersOk?'Ready'+(s.keys.gemini?' · Gemini':s.keys.anthropic?' · Anthropic':s.keys.nvidia?' · Nvidia':' · Claude Code'):'Not set';$('#step-answers').classList.toggle('set',answersOk);
+    $('#step-answers').textContent=answersOk?'Ready'+(viaPublik?' · publik':s.keys.gemini?' · Gemini':s.keys.anthropic?' · Anthropic':s.keys.nvidia?' · Nvidia':' · Claude Code'):'Not set';$('#step-answers').classList.toggle('set',answersOk);
     $('#voice-status').textContent='Whisper engine: '+(status.voice.whisper?'found':'missing')+' · Speech model: '+(status.voice.model?'found':'missing');
     $('#ptt-live').textContent=chord(status.ptt.accelerator);
     $('#ptt-input').placeholder=chord(status.ptt.accelerator);
@@ -349,6 +350,7 @@
       $('#feedback-message').value='';
       feedbackNote(r&&r.delivered?'Sent. Thank you. Pranav reads every note.':'Saved on this computer. It goes to Pranav as soon as Nūs can reach him.','ok');},e.submitter);};
   $('#ptt-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api.setPtt($('#ptt-input').value);if(!r.ok)throw new Error(r.error||'No talk key could be registered.');await settings();notice(r.fallback?'Requested key was unavailable. Live key: '+chord(r.accelerator):'Talk key updated.');},e.submitter);};
+  $('#use-own-key').onchange=e=>run(async()=>{await api.publikChoice(e.target.checked?'own_key':'publik');await settings();notice(e.target.checked?'Saved. Your own key or Claude Code answers now.':'Saved. publik answers now.');},e.target);
   const fields={'open-mic':['openMic',e=>e.checked],'speak-replies-home':['speakReplies',e=>e.checked],'sounds':['sounds',e=>e.checked],'channel-messages':['channelMessages',e=>e.checked],'start-with-windows':['startWithWindows',e=>e.checked],'focus-guard':['focusGuard',e=>e.checked],'hands':['hands',e=>e.checked],'tasks':['tasks',e=>e.checked],'knot-island':['knotIsland',e=>e.checked],'focus-feeds':['focusGuardFeeds',e=>e.value.split(',').map(x=>x.trim()).filter(Boolean)],'hide-from-capture':['hideFromCapture',e=>e.checked],'persist-transcripts-home':['persistTranscripts',e=>e.checked],'save-audio-home':['saveAudio',e=>e.checked],'retention-days':['audioRetentionDays',e=>Number(e.value)],'knot-display':['knotDisplayId',e=>e.value?Number(e.value):null]};
   for(const [id,[key,value]] of Object.entries(fields))$('#'+id).onchange=e=>run(async()=>{await api.settingsSet({[key]:value(e.target)});notice('Saved.');},e.target);
   // Two switches, one setting: the first-run card and the Privacy card stay in step.

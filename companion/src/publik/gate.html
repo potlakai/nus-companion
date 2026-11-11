@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Sign in with publik</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #e8eaf0; font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { box-sizing: border-box; height: 100%; padding: 28px 30px 24px; display: flex; flex-direction: column; gap: 12px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .nus { margin: 0; color: #c9cede; }
+  .nus + .nus { margin-top: -4px; }
+  .body { margin: 0; color: #e8eaf0; }
+  .note { margin: 0; color: #9aa3b8; font-size: 13px; min-height: 1em; }
+  .buttons { margin-top: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 10px; border: 1px solid #2a3040; background: #171b25; color: #e8eaf0; cursor: pointer; }
+  button.primary { background: #e8eaf0; color: #0b0d12; border-color: #e8eaf0; }
+  button:focus-visible { outline: 2px solid #7aa2ff; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Sign in with publik</h1>
+  <div id="nus"></div>
+  <p class="body" id="body"></p>
+  <p class="note" id="note"></p>
+  <div class="buttons" id="buttons"></div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  window.publikGate.onScreen((v) => {
+    document.title = v.title; $('title').textContent = v.title;
+    $('nus').replaceChildren(...v.nus.map((t) => { const p = document.createElement('p'); p.className = 'nus'; p.textContent = t; return p; }));
+    $('body').textContent = v.body; $('note').textContent = v.note || '';
+    $('buttons').replaceChildren(...v.buttons.map((b, i) => { const el = document.createElement('button'); el.textContent = b.label; if (i === 0) el.className = 'primary'; el.onclick = () => window.publikGate.press(b.action); return el; }));
+    const first = $('buttons').querySelector('button'); if (first) first.focus();
+  });
+</script>
+</body>
+</html>

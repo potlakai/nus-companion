@@ -9,7 +9,7 @@
 // Pure, no Electron: the guide, Hands, the assignment helper and index.js all
 // call it. get-started.js keeps its own words for the key box ("paste it here").
 
-const NAMES = { gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'Nvidia', cli: 'Claude Code', 'claude-code': 'Claude Code', 'claude (desktop)': 'Claude Code' };
+const NAMES = { publik: 'publik', gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'Nvidia', cli: 'Claude Code', 'claude-code': 'Claude Code', 'claude (desktop)': 'Claude Code' };
 
 const NET = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network|getaddrinfo|socket hang up/i;
 const SIGNED_OUT = /cli_not_logged_in|not logged in|\/login|failed to authenticate|oauth|session expired/i;
@@ -26,8 +26,17 @@ function providerName(provider, text) {
   return '';
 }
 
+// publik API's own failures (companion/src/publik): an empty balance shows Publik's message,
+// one line on what to do, and the bubble's Top up button carries Publik's one link.
+let publik = null;
+try { publik = require('./publik'); } catch (_) { publik = null; }
+
 function plainAskError(provider, raw) {
   const text = String((raw && raw.message) || raw || '');
+  if (publik && (String(provider || '').toLowerCase() === 'publik' || Number(raw && raw.status) === 402)) {
+    const line = publik.errorLine(raw);
+    if (line) return line;
+  }
   const name = providerName(provider, text);
   const who = name || 'the AI';
   const Who = name || 'The AI';

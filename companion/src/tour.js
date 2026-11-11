@@ -78,6 +78,8 @@ const DASHBOARD_DONE_LINE = 'That is the dashboard. The tray icon opens it any t
 const DASHBOARD_TUCK = 'This is the dashboard.';
 const DASHBOARD_FAILED_LINE = 'I could not open the dashboard here. The tray icon opens it any time.';
 const HOME_CHANGED_LINE = 'You can change this later from the tray or on the dashboard.';
+// Card 7 when publik answers. It also says, in plain words, what leaves the computer on an ask.
+const PUBLIK_BODY = "publik answers with your publik account, so there is no key to paste. When you ask, your question and a picture of your screen go to publik's AI to answer. Voice commands, reminders and your notes stay on this computer.";
 const KEY_OK_LINE = 'The key works. I can answer and point now.';
 const KEY_BAD_LINE = 'That does not look like a Gemini or Anthropic key. Copy it again and paste the whole key.';
 const KEY_FAILED_LINE = 'That key did not answer. Check it and try again, or come back to it on the dashboard.';
@@ -167,6 +169,8 @@ function card(step, info = {}) {
   if (step === STEP.home) return Object.assign(base, { kind: 'home', title: 'Where should I live?', body: 'Free, I sit where you put me and you can drag me anywhere. In the island bar I dock at the top of the screen and my words run along it. Tap one and watch.', spoken: 'Where should I live? Tap one and watch me move.', choices: homeChoices(caps.island), status: '', actions: continueActions(false) });
   if (step === STEP.sharing) return Object.assign(base, { kind: 'sharing', title: 'On a call or a recording', body: 'Off, people on your call see me too. On, I am invisible in screen shares and recordings, so only you see me.', spoken: 'On a call, I can stay out of the picture. Your choice.', toggle: sharingToggle(caps), note: caps.captureForcedOff ? 'Turned off for this session by its settings.' : '', status: '', actions: continueActions(false) });
   if (step === STEP.ai) {
+    // publik answers (picked on the sign-in screens): nothing to paste here.
+    if (caps.publik) return Object.assign(base, { kind: 'ai', title: 'Who answers', body: PUBLIK_BODY, spoken: 'publik answers for you. No key to paste.', note: 'To use your own key instead: the dashboard, under Settings, Keys.', status: '', actions: continueActions(false) });
     if (caps.cli) return Object.assign(base, { kind: 'ai', title: 'Who answers', body: 'Claude Code is installed on this computer. If it is signed in, I use it to answer and to point, with no key at all.', spoken: 'Claude Code is here, so I can answer with no key.', note: 'A Gemini or Anthropic key can go on the dashboard, under Settings, Keys.', status: '', actions: continueActions(false) });
     if (caps.keyReady) return Object.assign(base, { kind: 'ai', title: 'Who answers', body: 'An AI key is saved already. I use it to answer and to point.', spoken: 'Your AI key is saved. I can answer and point.', note: 'Keys live on the dashboard, under Settings, Keys.', status: '', actions: continueActions(false) });
     return Object.assign(base, { kind: 'ai', title: 'Who answers', body: 'Paste a free Gemini key, or an Anthropic key. It stays on this device, encrypted. You can add or change it any time on the dashboard, under Settings, Keys.', spoken: 'Who answers your questions? Paste a key here, or later on the dashboard.',
@@ -207,7 +211,7 @@ function cachedLines() {
   const caps = { whisper: true, source: true, cli: false, keyReady: false, hands: true, english: true, voice: { installed: true } };
   const lines = new Set(spokenLines(caps).filter((l) => !/Maya/.test(l)));
   for (const c of [{ installed: false }, { downloading: { got: 1, total: 2 } }]) lines.add(card(STEP.voice, { caps: Object.assign({}, caps, { voice: c }) }).spoken);
-  for (const extra of [{ source: false }, { cli: true }, { keyReady: true }, { hands: false }, { whisper: false }]) for (let s = 1; s <= OF; s++) lines.add(card(s, { caps: Object.assign({}, caps, extra) }).spoken);
+  for (const extra of [{ source: false }, { cli: true }, { keyReady: true }, { publik: true }, { hands: false }, { whisper: false }]) for (let s = 1; s <= OF; s++) lines.add(card(s, { caps: Object.assign({}, caps, extra) }).spoken);
   return [...lines].filter(Boolean);
 }
 

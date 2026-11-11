@@ -115,6 +115,7 @@
     <section id="view-settings" class="view" aria-label="Settings">
       <div class="settings-grid">
         <article class="glass card" id="keys-card"><div class="card-heading"><h3>Keys</h3></div><p class="muted">Two things to unlock, in any order. Stored on this device, encrypted. Saved keys are never shown here.</p>
+          <label class="check" id="publik-row" hidden><input id="use-own-key" type="checkbox">Use my own key or Claude Code <small>Off, publik answers with your publik account and no key is needed. On, the key or Claude Code below answers instead. Voice commands and reminders work either way.</small></label>
           <form id="key-form">
           <div class="check-step"><div><strong>Voice commands</strong><small class="muted">Open apps, type, search, save routines. Needs one TypeSafe key.</small></div><span id="step-voice" class="badge">Not set</span></div>
           <div class="key-row"><label for="key-typesafe-home">TypeSafe <small>Jev, the voice reflexes</small></label><span id="typesafe-state" class="badge">Not set</span><button type="button" class="link" data-url="https://typesafe.ai">Get a key ↗</button><input id="key-typesafe-home" type="password" autocomplete="off" placeholder="Paste a new key"><span class="row-actions"><button type="button" data-test="typesafe" class="quiet">Test</button><button type="button" data-clear="typesafe" class="quiet">Clear</button></span></div>

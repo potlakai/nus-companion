@@ -196,7 +196,7 @@ test('main runs the steps: the heard words go to the tour first, the demos have 
   assert.match(main, /tour\.step === Tour\.STEP\.guide && !tour\.shown && data && data\.task === 'guide'\) tourTargetShown\(\)/);
   assert.match(read('companion/preload.js'), /'tour:card', 'tour:update', 'tour:end'/);
   const host = read('src/main-companion.js');
-  assert.match(host, /tourAi: async \(\) => \(\{ cli: !!\(await ai\.status\(\)\)\.cli, key: createLLM\(store\.getSettings\(\)\)\.ready \}\)/);
+  assert.match(host, /tourAi: async \(\) => \(\{ cli: !!\(await ai\.status\(\)\)\.cli, key: createLLM\(store\.getSettings\(\)\)\.ready, publik: !!\(publik && publik\.active\(\)\) \}\)/);
   assert.match(host, /tourTestKey: which => testKeys\(String\(which \|\| ''\)\)/);
   assert.match(host, /tourSaveKey: \(kind, key\) => settingsPatch\(\{ apiKeys: \{ \[kind\]: String\(key \|\| ''\) \} \}\)/);
   assert.match(host, /tourDashboard: async \(\{ side, narrow, views \} = \{\}\) => \{/);
