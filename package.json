@@ -1,18 +1,13 @@
 {
-  "name": "nus-desktop",
-  "version": "0.2.5",
-  "description": "Nūs: the semester organizer that runs on your own AI, on your own machine.",
-  "main": "src/main.js",
+  "name": "nus-companion",
+  "version": "0.1.18",
+  "description": "Nūs Companion: ask about your screen by voice or text. The Knot points, guides and can act.",
+  "main": "src/main-companion.js",
   "private": true,
   "scripts": {
-    "start": "electron .",
-    "smoke": "electron . --smoke",
-    "tour": "electron . --tour",
-    "test:db": "node --test src/db.test.js",
-    "dist": "electron-builder --win --config electron-builder.config.js",
-    "dist:mac": "electron-builder --mac --config electron-builder.config.js",
+    "start": "electron src/main-companion.js",
+    "smoke": "electron src/main-companion.js --smoke",
     "test": "node --test src/*.test.js companion/test/*.test.js",
-    "dist:check": "node scripts/package-security-check.js",
     "setup:voice": "node scripts/setup-voice.js",
     "setup:embed": "node scripts/setup-embed.js",
     "start:companion": "electron src/main-companion.js",
@@ -27,7 +22,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/potlakai/nus-desktop.git"
+    "url": "https://github.com/potlakai/nus-companion.git"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
