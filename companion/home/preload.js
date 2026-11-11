@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('home', {
   recallImportFolder: () => invoke('recall:import-folder'), recallImportFile: () => invoke('recall:import-file'), recallForget: () => invoke('recall:forget'), tasksDelete: () => invoke('tasks:delete'),
   recallTopics: () => invoke('recall:topics'), recallWatch: on => invoke('recall:watch', on), recallWatchFolder: clear => invoke('recall:watch-folder', clear),
   feedbackSend: p => invoke('feedback:send', p), feedbackStatus: () => invoke('feedback:status'),
+  contactStatus: () => invoke('contact:status'), contactGive: email => invoke('contact:give', email), contactDecline: () => invoke('contact:decline'),
   accountStatus: () => invoke('account:status'), accountSignIn: () => invoke('account:signin'), accountCancel: () => invoke('account:cancel'),
   accountSignOut: () => invoke('account:signout'), accountDismiss: () => invoke('account:dismiss'),
   accountUnlink: () => invoke('account:unlink'), accountLink: () => invoke('account:link'), accountDelete: () => invoke('account:delete'),
@@ -23,5 +24,5 @@ contextBridge.exposeInMainWorld('home', {
   tasksList: () => invoke('tasks:list'), taskAction: p => invoke('task:action', p), projectContinue: id => invoke('project:continue', id), knotWord: () => invoke('knot:word'),
   tourState: () => invoke('tour:state'), tourStart: () => invoke('tour:start'), tourSkip: () => invoke('tour:skip'),
   reminders: () => invoke('reminders:list'), removeReminder: id => invoke('reminders:remove', id), activity: () => invoke('activity'),
-  on: (channel, cb) => { if (!['home:state','home:indexing','home:save-state','home:view','home:voice','home:recall','home:tour','home:settings','home:tasks','home:knot','home:account','home:update','home:reminders'].includes(channel)) return; const listener=(_e,value)=>cb(value); ipcRenderer.on(channel,listener); return () => ipcRenderer.removeListener(channel,listener); }
+  on: (channel, cb) => { if (!['home:state','home:indexing','home:save-state','home:view','home:voice','home:recall','home:tour','home:settings','home:tasks','home:knot','home:account','home:contact','home:update','home:reminders'].includes(channel)) return; const listener=(_e,value)=>cb(value); ipcRenderer.on(channel,listener); return () => ipcRenderer.removeListener(channel,listener); }
 });

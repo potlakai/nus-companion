@@ -136,13 +136,16 @@ function createFeedback(o) {
   }
 
   // Queue one note and try to send it now. Resolves to { delivered, waiting }.
-  async function submit({ message, collector, kind, rating, reason, mode, email }) {
+  // bare: the note travels alone, with no install id and no usage counts (the
+  // contact card, companion/src/contact.js: an address must not name an install).
+  async function submit({ message, collector, kind, rating, reason, mode, email, bare }) {
     const text = String(message || '').trim().slice(0, MESSAGE_MAX);
     if (!text) return { delivered: false, waiting: outbox().length, empty: true };
     const s = st();
     let id = null;
-    try { id = o.installId ? o.installId() : null; } catch { id = null; }
-    const diagnostics = { collector: String(collector || 'tell'), asks: Number(s.asks) || 0, days: Math.floor((now() - s.firstSeen) / DAY_MS) };
+    try { id = !bare && o.installId ? o.installId() : null; } catch { id = null; }
+    const diagnostics = bare ? { collector: String(collector || 'tell') }
+      : { collector: String(collector || 'tell'), asks: Number(s.asks) || 0, days: Math.floor((now() - s.firstSeen) / DAY_MS) };
     if (rating) diagnostics.rating = String(rating);
     if (reason) diagnostics.reason = String(reason);
     if (MODES.includes(mode)) diagnostics.mode = mode;

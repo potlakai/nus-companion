@@ -30,6 +30,10 @@
     <section id="update-card" class="glass card" aria-label="New version" hidden>
       <div class="stats-line"><p><strong id="update-title">A newer Nūs Companion is out.</strong> <span class="muted" id="update-copy"></span></p><span class="row-actions"><button id="update-download" class="primary">Download</button><button id="update-later" class="quiet">Later</button></span></div>
     </section>
+    <section id="contact-card" class="glass card" aria-label="News from Nūs" hidden>
+      <form id="contact-form" class="stats-line" novalidate><p><strong id="contact-title"></strong> <span class="muted" id="contact-copy"></span></p><span class="row-actions"><input id="contact-email" type="email" maxlength="200" autocomplete="email" aria-label="Your email"><button id="contact-save" type="submit" class="primary"></button><button id="contact-no" type="button" class="quiet"></button></span></form>
+      <p id="contact-note" class="muted" role="status" aria-live="polite"></p>
+    </section>
     <section id="stats-intro" class="glass card" aria-label="Anonymous usage stats" hidden>
       <div class="stats-line"><p class="muted">Nūs sends anonymous usage stats (which features get used, never your coursework or what you type). Turn off in Settings.</p><label class="check switch"><input id="send-stats-intro" type="checkbox">Send anonymous usage stats</label></div>
       <div class="stats-source"><span>Where did you hear about Nūs?</span><div class="source-row"><button data-source="instagram">Instagram</button><button data-source="friend">A friend</button><button data-source="reddit">Reddit</button><button data-source="x">X</button><button data-source="youtube">YouTube</button><button data-source="search">Search</button><button data-source="other">Other</button><button data-source="skipped" class="quiet">Skip</button></div></div>

@@ -699,6 +699,8 @@ function noteWin(feature) {
   if (!f) return;
   try { const total = getRetention().noteWin(f); const m = getRetention().milestone(total); if (m) rtMilestonePending = m; } catch (_) { /* the local record never breaks an answer */ }
   if (typeof hooks.onWin === 'function') { try { hooks.onWin(f); } catch (_) { /* stats never break an answer */ } }
+  // The contact card's clock starts at the first thing that worked (src/contact.js).
+  try { getContact().noteWin(); } catch (_) { /* the ask never breaks an answer */ }
   rtAfterWin();
 }
 // The person did something with Nus (an ask, the tray): the host counts one
@@ -815,6 +817,7 @@ function rtTryQuietMoment() {
   const wb = R.winback({ projects: rtProjects() });
   if (wb && rtShow(wb.hook, wb.step === 'd30' ? 'from the Knot' : 'still here', wb.text, wb.actions, wb.projectId ? { projectId: wb.projectId } : null)) { R.winbackShown(wb.step); return true; }
   if (rtTryMorning()) return true;
+  if (rtTryContact()) return true;
   if (hooks.feedback && R.pmfDue() && R.canPop('pmf') && rtFree()) {
     R.popped('pmf');
     rtShowing = { hook: 'pmf', timer: setTimeout(() => rtEnd('ignored'), RT_IGNORE_MS) };
@@ -824,6 +827,62 @@ function rtTryQuietMoment() {
     return true;
   }
   return false;
+}
+// -------- the contact card (companion/src/contact.js; Pranav's ruling pending, 2026-11-11) --------
+// One ask for an email, a few minutes after something worked, never in the tour.
+// The Knot asks with two buttons; "Leave my email" opens its own typed line.
+// The dashboard shows the same ask as a card. The address goes to Pranav's
+// feedback notes (the same place as the site's Mac waitlist), never to publik.
+let contact = null;
+let contactCardCounted = false;
+function getContact() {
+  if (!contact) {
+    const { createContact } = require('./src/contact');
+    contact = createContact({ file: path.join(app.getPath('userData'), 'companion', 'contact.json'), feedback: hooks.feedback || null });
+  }
+  return contact;
+}
+function contactChanged() { if (typeof hooks.onContact === 'function') { try { hooks.onContact(contactStatus()); } catch (_) { /* the dashboard repaints on its next open */ } } }
+// For the dashboard: due only with a feedback pipe to carry it, and never during the tour.
+function contactStatus() {
+  const s = getContact().status();
+  const due = !!(s.due && hooks.feedback && !tour);
+  if (due && !contactCardCounted) { contactCardCounted = true; noteHook('shown', 'contact_card'); }
+  return Object.assign({}, s, { due });
+}
+function rtTryContact() {
+  if (!hooks.feedback) return false;
+  const C = getContact();
+  if (!C.bubbleDue()) return false;
+  const W = require('./src/contact').WORDS;
+  const shown = rtShow('contact_card', W.kicker, W.bubble, [{ id: 'rt-contact-yes', label: W.yes, primary: true }, { id: 'rt-contact-no', label: W.no }]);
+  if (shown) { C.bubbleShown(); contactCardCounted = true; }
+  return shown;
+}
+function openContactLine() {
+  if (!win || win.isDestroyed()) return;
+  if (!win.isVisible()) toggleOverlay();
+  send('quick:open', { contact: true });
+}
+// The address as typed into the Knot's line or the dashboard card. It is read
+// here and nowhere else: never logged, never sent to a model, never kept on disk.
+async function contactGive(raw, from) {
+  const W = require('./src/contact').WORDS;
+  const r = await getContact().give(raw);
+  if (!r.ok) {
+    if (from === 'knot') { flash(r.reason === 'bad_email' ? W.bad : 'That did not save. Try again from the dashboard.', 4000); if (r.reason === 'bad_email') setTimeout(openContactLine, 600); }
+    return Object.assign({ ok: false, reason: r.reason, message: r.reason === 'bad_email' ? W.bad : 'That did not save. Try again.' }, contactStatus());
+  }
+  noteHook('used', 'contact_card');
+  const line = r.delivered ? W.saved : W.savedLater;
+  if (from === 'knot') flash(line, 4500);
+  contactChanged();
+  return Object.assign({ ok: true, message: line }, contactStatus());
+}
+function contactDecline() {
+  if (!getContact().answered()) { getContact().decline(); noteHook('used', 'contact_declined'); }
+  contactChanged();
+  return contactStatus();
 }
 // After the tour: the person's own "this week" answer, offered back as a check-in.
 function rtOfferCheckin(answer) {
@@ -868,6 +927,12 @@ function retentionAction(id) {
     // the feedback pipe, so it lands in Pranav's inbox with the rest.
     if (hooks.feedback) hooks.feedback.submit({ message: 'If Nūs went away I would be: ' + answer, collector: 'pmf', kind: 'other' }).catch(() => {});
     flash('Thank you. Pranav reads every answer.', 3500);
+  } else if (id === 'rt-contact-yes') {
+    rtEnd('used'); guideDismiss('retention');
+    openContactLine();
+  } else if (id === 'rt-contact-no') {
+    rtEnd('dismissed'); guideDismiss('retention');
+    contactDecline();
   } else if (id === 'rt-ok') {
     const s = rtEnd('used'); guideDismiss('retention');
     if (s) noteHook('used', s.hook);
@@ -1704,6 +1769,8 @@ function registerIpc() {
     if (p && p.action === 'copy-rewrite') { if (lastRewrite) { clipboard.writeText(lastRewrite); flash('Copied.', 1800); } guideDismiss('copied'); return; }
     if (p && p.action) { if (guide) guide.onAction(String(p.action)); return; }
     if (p && p.text && p.text.trim()) {
+      // The contact card's line: an email address for Pranav's updates list. It stops here.
+      if (p.contact === true) { contactGive(String(p.text).slice(0, 200), 'knot').catch(() => {}); return; }
       // "Tell Pranav ...", or the Tell Pranav line: a note to the founder.
       if (tellIntercept(p.text, p.feedback === true)) return;
       // "Move to the top left": the Knot itself is being sent somewhere.
@@ -4020,11 +4087,12 @@ function tourEnd(reason) {
   const week = (T.qa || []).find((x) => x && /this week/i.test(String(x.q || '')));
   if (week && week.a && tourPickedStruggle !== 'homework_start') rtOfferCheckin(week.a);
 }
-// How answers are possible on this install, said once when the tour ends: a
-// saved key, Claude Code on this computer, or neither.
+// How answers are possible on this install, said once when the tour ends:
+// publik answering, a saved key, Claude Code on this computer, or none of them.
+// (0.1.18 left publik out, so an install answered by publik said "none".)
 function noteAiReady() {
   if (typeof hooks.onAiReady !== 'function' || typeof hooks.tourAi !== 'function') return;
-  Promise.resolve(hooks.tourAi()).then((a) => { hooks.onAiReady(a && a.key ? 'key' : a && a.cli ? 'claude_code' : 'none'); }).catch(() => {});
+  Promise.resolve(hooks.tourAi()).then((a) => { hooks.onAiReady(a && a.publik ? 'publik' : a && a.key ? 'key' : a && a.cli ? 'claude_code' : 'none'); }).catch(() => {});
 }
 
 async function routeUtterance(text, source, heard, uttId, assignmentAlreadyChecked) {
@@ -5063,6 +5131,10 @@ function initCompanion(providedHooks = {}) {
     channelTick,
     channelProgress,
     myNus,
+    // The contact card on the dashboard (companion/src/contact.js).
+    contactStatus,
+    contactGive: (email) => contactGive(email, 'home'),
+    contactDecline,
   };
 }
 // My Nus for the dashboard (companion/src/my-nus.js): worked out here, sent nowhere.

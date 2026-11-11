@@ -93,7 +93,7 @@ test('launch to first ask is kept on this computer, once, even with stats off, a
 test('Get started adds no telemetry: the event list matches the contract and the onboarding steps are unchanged', () => {
   const { STEPS } = require('../src/stats');
   // Amendment (e), 2026-11-06, added ai_ready, engaged, first_win and the two hook events.
-  assert.deepEqual([...EVENTS].sort(), ['ai_ready', 'app_open', 'app_session', 'ask', 'companion_session', 'crash', 'engaged', 'feature_session', 'first_ask', 'first_run_end', 'first_win', 'hook_shown', 'hook_used', 'install', 'key_connected', 'notice_clicked', 'notice_shown', 'onboarding_step', 'source_answer', 'stats_off', 'update_installed', 'update_offered']);
+  assert.deepEqual([...EVENTS].sort(), ['ai_ready', 'ai_source', 'app_open', 'app_session', 'ask', 'companion_session', 'crash', 'engaged', 'feature_session', 'first_ask', 'first_run_end', 'first_win', 'hook_shown', 'hook_used', 'install', 'key_connected', 'notice_clicked', 'notice_shown', 'onboarding_step', 'signin', 'signin_clicked', 'signin_closed', 'signin_shown', 'signin_unreachable', 'source_answer', 'stats_off', 'update_installed', 'update_offered']);
   assert.deepEqual(STEPS.slice(0, 6), ['welcome_seen', 'stats_notice_seen', 'key_prompt_seen', 'key_skipped', 'key_connected', 'first_window_closed']);
   assert.doesNotMatch(read('companion/src/get-started.js'), /track\(|onboardingStep\(/);
 });

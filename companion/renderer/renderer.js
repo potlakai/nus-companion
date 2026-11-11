@@ -2367,12 +2367,16 @@
   // feedback: the line is a note to Pranav (the tray's Tell Pranav, or the
   // check-in's Tell him); what is typed goes to him, not to the model.
   let quickFeedback = false;
-  function openQuickAsk(about, feedback) {
+  // contact: the line takes an email address for Pranav's updates list (the
+  // contact card's Leave my email). It goes to the main process as that, never as an ask.
+  let quickContact = false;
+  function openQuickAsk(about, feedback, contact) {
     quickOpen = true;
     const wait = claimKnotSlot(quickAsk);
     quickAbout = about || null;
-    quickFeedback = !!feedback && !quickAbout;
-    quickInput.placeholder = quickFeedback ? 'Tell Pranav what to fix or build' : quickAbout ? 'Ask about "' + quickAbout + '"' : QUICK_PLACEHOLDER;
+    quickContact = !!contact && !quickAbout;
+    quickFeedback = !!feedback && !quickAbout && !quickContact;
+    quickInput.placeholder = quickContact ? 'Your email, then Enter' : quickFeedback ? 'Tell Pranav what to fix or build' : quickAbout ? 'Ask about "' + quickAbout + '"' : QUICK_PLACEHOLDER;
     // Live at once: the line takes the keys from the first frame, whatever the
     // thread is still doing.
     openSlotSurface(quickAsk, () => placeByKnot(quickAsk), { origin: originAt(quickAsk, slotPoint) }, wait);
@@ -2405,6 +2409,7 @@
     if (knotMenu && knotMenu.source === 'knot') knotMenu.close();
     quickAbout = null;
     quickFeedback = false;
+    quickContact = false;
     quickInput.placeholder = QUICK_PLACEHOLDER;
     hideSurface(quickAsk, syncSlotFold);
     $('#toolbar').classList.remove('quick-open');
@@ -2421,6 +2426,8 @@
     const text = quickInput.value.trim();
     const about = quickAbout;
     const toPranav = quickFeedback;
+    const address = quickContact;
+    if (address) { closeQuickAsk(); if (text && nus.guideAsk) nus.guideAsk({ text, source: 'typed', contact: true }); return; }
     if (!text) { closeQuickAsk(); if (!about && !toPranav && !standalone) runMode('guide', ''); return; }
     if (toPranav) { closeQuickAsk(); if (nus.guideAsk) nus.guideAsk({ text, source: 'typed', feedback: true }); return; }
     // The acknowledgement comes first, inside the frame of the keypress; the
@@ -2431,7 +2438,7 @@
   });
   // Ctrl+Shift+T (main): the thread is already on the control under the
   // cursor; the composer opens for a question about it.
-  nus.on('quick:open', (p) => openQuickAsk(p && p.context ? String(p.context) : null, !!(p && p.feedback)));
+  nus.on('quick:open', (p) => openQuickAsk(p && p.context ? String(p.context) : null, !!(p && p.feedback), !!(p && p.contact)));
   nus.on('assignment:takeover', () => {
     closeQuickAsk();
     pendingBubble = null;

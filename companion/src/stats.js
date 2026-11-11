@@ -21,10 +21,12 @@ const PRODUCT = 'companion';
 const EVENTS = new Set(['install', 'app_open', 'source_answer', 'first_ask', 'ask', 'key_connected', 'companion_session', 'stats_off',
   'feature_session', 'app_session', 'onboarding_step', 'first_run_end', 'crash', 'update_installed',
   'update_offered', 'notice_shown', 'notice_clicked',
-  'first_win', 'engaged', 'ai_ready', 'hook_shown', 'hook_used']);
+  'first_win', 'engaged', 'ai_ready', 'hook_shown', 'hook_used',
+  // Amendment (f), 2026-11-11: the sign-in door (Sign in with publik).
+  'signin_shown', 'signin_clicked', 'signin', 'signin_closed', 'signin_unreachable', 'ai_source']);
 const PROP_KEYS = new Set(['acq_action_id', 'utm_source', 'utm_medium', 'utm_campaign', 'source', 'mode', 'provider', 'minutes', 'method', 'unit', 'reason', 'os_version', 'locale', 'dev',
   'feature', 'seconds', 'outcome', 'step', 'from', 'surface', 'notice', 'via',
-  'hook', 'path', 'struggle', 'nudge_group']);
+  'hook', 'path', 'struggle', 'nudge_group', 'cohort', 'screen']);
 const SOURCES = ['instagram', 'friend', 'reddit', 'x', 'youtube', 'search', 'other', 'skipped'];
 const MODES = ['voice', 'text', 'guide'];
 // Contract amendment 2026-10-17 (c): which feature answered (never what was
@@ -44,9 +46,27 @@ const STEPS = ['welcome_seen', 'stats_notice_seen', 'key_prompt_seen', 'key_skip
 // anything else is dropped before the send.
 // hook: which retention loop was put in front of the person, or taken up.
 const HOOKS = ['checkin', 'morning_line', 'continue_project', 'reminder_toast', 'autostart_offer', 'my_nus', 'knot_report', 'notice',
-  'winback_d3', 'winback_d7', 'winback_d30', 'share_card', 'quiet_mode'];
+  'winback_d3', 'winback_d7', 'winback_d30', 'share_card', 'quiet_mode',
+  // Amendment (f): the one ask for an email after a first win. Shown, saved
+  // (hook_used contact_card) or turned down (hook_used contact_declined).
+  'contact_card', 'contact_declined'];
 // path: how answers are possible on this install, sent once after the key card.
-const AI_PATHS = ['key', 'claude_code', 'none'];
+// publik (amendment f): publik's AI answers and no key is on this computer.
+const AI_PATHS = ['key', 'claude_code', 'none', 'publik'];
+// Amendment (f), 2026-11-11: the sign-in door. Fixed lists; nothing from
+// publik's files, no account, no email, ever.
+// cohort: was a different version here before this one (update) or not (new).
+// screen: where the door stood when it was closed. ai_source path: who answers
+// once the person is through, publik or their own key.
+const COHORTS = ['new', 'update'];
+const GATE_SCREENS = ['sign_in', 'waiting', 'choose', 'unreachable'];
+const AI_SOURCES = ['publik', 'own_key'];
+// The door's rows wait on this computer until the server takes them: the door
+// is where the app quits, and where the network is most often missing. A short
+// list in stats-state.json, oldest first, tried again at the next launch.
+const QUEUE_MAX = 30;
+const QUEUE_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+const QUEUE_MAX_TRIES = 8;
 // struggle: the one tap on the first card ("What wastes your time?").
 const STRUGGLES = ['homework_start', 'feeds', 'find_in_apps', 'writing', 'remember', 'other'];
 // via: what started this process. login = Windows at sign-in (the --autostart
@@ -141,6 +161,10 @@ function createStats(o) {
   let firstWinInFlight = false;
   let engagedTried = '';
   let crashesSent = 0;
+  // The sign-in door in this process, and the rows the server refused this run.
+  let gate = null;
+  let flushing = null;
+  const refused = new Set();
   const stepsTried = new Set();
   // Open feature timers (a guide walking, Hands running, the focus guard on):
   // each is a stopper that sends feature_session {feature, seconds} once.
@@ -194,11 +218,111 @@ function createStats(o) {
     } catch { return { sent: false, status: 0 }; }
   }
 
+  // ---- rows that must not be lost (amendment f) ----
+  // Written to stats-state.json before the send and removed only once the
+  // server took the row (2xx). No answer at all: stop, the next launch goes on
+  // from here. A refusal (a server that does not know the name yet says 400):
+  // the row stays, is tried once per launch, and is dropped after 8 refusals
+  // or 14 days. Stats off: nothing is kept.
+  const none = () => Promise.resolve({ sent: false, status: 0 });
+  function queued() { const q = st().queue; return Array.isArray(q) ? q : []; }
+  function durable(name, props) {
+    if (!EVENTS.has(name) || !enabled()) return none();
+    const item = { k: now() + '-' + Math.random().toString(36).slice(2, 8), name, props: cleanProps(props), at: now(), tries: 0 };
+    remember({ queue: queued().concat(item).slice(-QUEUE_MAX) });
+    return flush();
+  }
+  function flush() {
+    if (flushing) return flushing;
+    flushing = (async () => {
+      let last = { sent: false, status: 0 };
+      for (;;) {
+        const live = queued().filter(i => i && EVENTS.has(i.name) && now() - (Number(i.at) || 0) < QUEUE_MAX_AGE_MS && (Number(i.tries) || 0) < QUEUE_MAX_TRIES);
+        if (live.length !== queued().length) remember({ queue: live });
+        const item = live.find(i => !refused.has(i.k));
+        if (!item || !enabled()) break;
+        const r = await track(item.name, item.props);
+        last = r;
+        if (r.status >= 200 && r.status < 300) remember({ queue: queued().filter(i => i.k !== item.k) });
+        else if (r.status >= 400 && r.status < 500) { refused.add(item.k); remember({ queue: queued().map(i => (i.k === item.k ? { ...i, tries: (Number(i.tries) || 0) + 1 } : i)) }); }
+        else break;
+      }
+      return last;
+    })().finally(() => { flushing = null; });
+    return flushing;
+  }
+
+  // ---- the sign-in door (amendment f) ----
+  // The host says which of publik's screens is on the glass, which button was
+  // pressed, and when the door let the person through. Counts only: the install
+  // id and a name, never anything publik knows.
+  // new or update, decided once: was a different version here before this one.
+  function cohort() {
+    const s = st();
+    if (!COHORTS.includes(s.cohort)) remember({ cohort: s.lastVersion && String(s.lastVersion) !== String(o.appVersion || '') ? 'update' : 'new' });
+    return st().cohort;
+  }
+  function gateScreen(screen) {
+    if (!GATE_SCREENS.includes(screen)) return none();
+    const t = now();
+    if (!gate) gate = { shownAt: t, signShownAt: 0, shown: false, clicked: false, unreachable: false };
+    gate.screen = screen;
+    // The mark a killed process leaves behind, so the next launch can say it closed.
+    remember({ gate: { screen, shownAt: gate.shownAt, at: t } });
+    if (screen === 'choose') return signedIn();
+    if (screen === 'unreachable') { if (gate.unreachable) return none(); gate.unreachable = true; return durable('signin_unreachable'); }
+    if (gate.shown) return none();
+    gate.shown = true; gate.signShownAt = t;
+    return durable('signin_shown', { cohort: cohort() });
+  }
+  function gatePress(action) {
+    if (action !== 'sign_in' || !gate || gate.clicked) return none();
+    gate.clicked = true;
+    return durable('signin_clicked');
+  }
+  // Signed in to publik: once per install. seconds only when the window was up.
+  function signedIn() {
+    if (st().signinDone || !enabled()) return none();
+    remember({ signinDone: true });
+    const seconds = gate && gate.signShownAt ? Math.max(0, Math.round((now() - gate.signShownAt) / 1000)) : null;
+    return durable('signin', { method: 'publik', ...(seconds != null ? { seconds } : {}) });
+  }
+  // Who answers: sent when it is first known, and again only when it changes.
+  function aiSource(p) {
+    if (!AI_SOURCES.includes(p) || st().aiSource === p || !enabled()) return none();
+    remember({ aiSource: p });
+    return durable('ai_source', { path: p });
+  }
+  // The door let the person through.
+  function gatePassed(choice) {
+    const a = signedIn();
+    gate = null;
+    if (st().gate) remember({ gate: null });
+    return Promise.all([a, aiSource(choice)]).then(rs => rs[0]);
+  }
+  // The window was closed, or the app quit, with the door still shut.
+  function gateClosed() {
+    const g = st().gate;
+    if (!g) return none();
+    gate = null;
+    remember({ gate: null });
+    return durable('signin_closed', { screen: GATE_SCREENS.includes(g.screen) ? g.screen : 'sign_in', seconds: Math.max(0, Math.round((now() - (Number(g.shownAt) || now())) / 1000)) });
+  }
+
   // Once per boot: install on the very first run, then this process's app_open,
   // then a 15 minute check so a Companion left in the tray says hello once a day.
+  // The host calls this BEFORE the sign-in door (amendment f), so an install
+  // that never gets through is still an install.
   async function boot(opts = {}) {
     const s = st();
     nudgeGroup();
+    cohort();
+    // The last process ended with the door still shut and never said so (it was
+    // killed, or the PC went down): say it now, up to the last screen it showed.
+    if (s.gate && !gate) {
+      remember({ gate: null });
+      durable('signin_closed', { screen: GATE_SCREENS.includes(s.gate.screen) ? s.gate.screen : 'sign_in', seconds: Math.max(0, Math.round(((Number(s.gate.at) || 0) - (Number(s.gate.shownAt) || 0)) / 1000)) });
+    } else flush();
     // The clock first_run_end reads from: the first launch on this install.
     if (!s.firstLaunchAt) remember({ firstLaunchAt: now() });
     if (!s.installed) {
@@ -289,10 +413,13 @@ function createStats(o) {
   // How answers are possible here, once per install.
   function aiReady(p) {
     if (!AI_PATHS.includes(p) || st().aiReadySent) return Promise.resolve({ sent: false, status: 0 });
+    // publik is new to the server's list (amendment f): it waits in the queue until taken.
+    if (p === 'publik') { if (!enabled()) return none(); remember({ aiReadySent: true }); return durable('ai_ready', { path: p }); }
     return track('ai_ready', { path: p }).then(r => { if (r.sent) remember({ aiReadySent: true }); return r; });
   }
   // A retention loop put in front of the person, or taken up. Counts only.
-  function hook(name, h) { return HOOKS.includes(h) ? track(name, { hook: h }) : Promise.resolve({ sent: false, status: 0 }); }
+  // The contact card's rows are new to the server's list (amendment f), so they wait in the queue.
+  function hook(name, h) { return !HOOKS.includes(h) ? none() : h.startsWith('contact_') ? durable(name, { hook: h }) : track(name, { hook: h }); }
   const hookShown = h => hook('hook_shown', h);
   const hookUsed = h => hook('hook_used', h);
   // A long-running mode started: the stopper sends feature_session with the
@@ -373,12 +500,13 @@ function createStats(o) {
   function setEnabled(value) {
     const want = value !== false;
     let last = Promise.resolve();
-    if (!want && switchedOn()) { last = track('stats_off'); o.settings.set({ sendStats: false }); }
+    if (!want && switchedOn()) { last = track('stats_off'); o.settings.set({ sendStats: false }); if (queued().length) remember({ queue: [] }); }
     else if (want && !switchedOn()) o.settings.set({ sendStats: true });
     return last.then(status);
   }
   function status() { return { enabled: switchedOn(), active: enabled(), firstRun: !st().sourceAnswered, asked: !!st().firstAskSent, firstAskSeconds: Number.isFinite(st().firstAskSeconds) ? st().firstAskSeconds : null, lastStep: st().lastStep || null, notice: NOTICE, dev,
-    firstWinAt: st().firstWinAt || null, firstWinFeature: st().firstWinFeature || null, nudgeGroup: nudgeGroup() }; }
+    firstWinAt: st().firstWinAt || null, firstWinFeature: st().firstWinFeature || null, nudgeGroup: nudgeGroup(),
+    cohort: COHORTS.includes(st().cohort) ? st().cohort : null, signedIn: !!st().signinDone, aiSource: st().aiSource || null, waiting: queued().length }; }
   // Quit: stop the clocks, close the open feature timers, send the session's
   // minutes and, on a first run that never asked, first_run_end. Resolves
   // within about a second whatever the network does, so the host can wait.
@@ -387,14 +515,18 @@ function createStats(o) {
     if (minuteTimer) { timers.clearInterval(minuteTimer); minuteTimer = null; }
     const settle = new Promise(resolve => { const t = setTimeout(resolve, 1200, { sent: false, status: 0 }); if (t && typeof t.unref === 'function') t.unref(); });
     const sends = [...openFeatures].map(stopper => stopper());
-    sends.push(flushSession(), firstRunEnd());
+    // Quit with the sign-in door still shut: that is signin_closed, written to
+    // disk before the send so a slow network cannot lose it. first_run_end
+    // keeps its meaning (a first run that got in and never asked), so it waits.
+    sends.push(flushSession(), st().gate ? gateClosed() : firstRunEnd());
     return Promise.race([Promise.all(sends).then(rs => rs[rs.length - 2]), settle]);
   }
 
   return { track, boot, tick, minute, flushSession, activeMinutes: () => activeMinutes, ask, featureSession, onboardingStep, firstRunEnd, crash,
     keyConnected, sourceAnswer, setEnabled, status, stop, installId: id, enabled, dev: () => dev, updateOffered, noticeShown, noticeClicked, noteOneClick,
-    win, engaged, aiReady, hookShown, hookUsed, nudgeGroup };
+    win, engaged, aiReady, hookShown, hookUsed, nudgeGroup,
+    gateScreen, gatePress, gatePassed, gateClosed, aiSource, cohort, flush, queued: () => queued().slice() };
 }
 
 module.exports = { createStats, TRACK_URL, EVENTS, PROP_KEYS, SOURCES, MODES, FEATURES, OUTCOMES, STEPS, SURFACES, NOTICE_ID, NOTICE, IDLE_LIMIT_S, DEV_FILE, utcDay,
-  HOOKS, AI_PATHS, STRUGGLES, VIAS, NUDGE_HOLDOUT };
+  HOOKS, AI_PATHS, STRUGGLES, VIAS, NUDGE_HOLDOUT, COHORTS, GATE_SCREENS, AI_SOURCES, QUEUE_MAX, QUEUE_MAX_AGE_MS, QUEUE_MAX_TRIES };

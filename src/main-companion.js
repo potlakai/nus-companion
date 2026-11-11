@@ -80,6 +80,10 @@ const stats = createStats({ userData, settings: { get: () => store.getSettings()
   appVersion: companionVersion(), platform: process.platform, packaged: app.isPackaged, ...(testBuild.statsUrl ? { url: testBuild.statsUrl } : {}),
   idleSeconds: () => { try { return powerMonitor.getSystemIdleTime(); } catch { return 0; } } });
 crashHandlers.setOnCrash(() => stats.crash());
+// The sign-in gate's counts (contract amendment f): which of publik's screens is up, the button
+// pressed, and the moment the gate lets the person through. A test run counts nothing.
+const gateCount = SMOKE ? { screen() {}, press() {}, passed() {} }
+  : { screen: id => { stats.gateScreen(id); }, press: action => { stats.gatePress(action); }, passed: choice => { stats.gatePassed(choice); } };
 function anyKeySaved() { try { return Object.values(store.getSettings().apiKeys || {}).some(Boolean); } catch { return false; } }
 // Feedback to Pranav (companion/src/feedback.js): "tell Pranav ...", a
 // one-tap reaction after the 1st, 5th and 25th ask, a day-3 check-in. Notes
@@ -350,7 +354,7 @@ function handle(channel, fn) {
 function registerHomeIpc() {
   // The first window paints the stats notice: one step, counted once.
   // Who answers, publik or the person's own key (Settings, Keys). Only in a publik build.
-  handle('home:publik:choice', (choice) => { if (publik) publik.setChoice(String(choice || '')); return { choice: publik ? publik.choice() : null }; });
+  handle('home:publik:choice', (choice) => { if (publik) { publik.setChoice(String(choice || '')); stats.aiSource(publik.choice()); } return { choice: publik ? publik.choice() : null }; });
   handle('home:status', async () => ({ ...companion.status(), ai: await ai.status(), llmReady: createLLM(store.getSettings()).ready, publik: publik ? { on: true, choice: publik.choice() } : { on: false }, version: companionVersion(),
     ...(stats.status().firstRun ? (stats.onboardingStep('stats_notice_seen'), {}) : {}),
     hotkeys: { ptt: companion.status().ptt.accelerator, assist: store.getSettings().shortcuts.assist, select: 'Ctrl+Shift+T', toggle: 'Ctrl+Shift+Space', panic: 'Ctrl+Shift+X' },
@@ -386,6 +390,11 @@ function registerHomeIpc() {
   // sent (or queued) on Send. Nothing else from the app rides along.
   handle('home:feedback:send', p => feedback.submit({ message: String((p && p.message) || ''), kind: String((p && p.kind) || 'other'), email: String((p && p.email) || ''), collector: 'home' }));
   handle('home:feedback:status', () => feedback.status());
+  // The contact card (companion/src/contact.js): one ask for an email after something worked.
+  // The address goes through the feedback pipe to Pranav's notes; it is never logged here.
+  handle('home:contact:status', () => companion.contactStatus());
+  handle('home:contact:give', email => companion.contactGive(String(email || '').slice(0, 200)));
+  handle('home:contact:decline', () => companion.contactDecline());
   // The optional account: Sign in with Google resolves when the browser comes
   // back (or the five minute attempt ends); Home stays usable meanwhile.
   handle('home:account:status', accountState);
@@ -520,10 +529,19 @@ app.whenReady().then(async () => {
   if (exam) { standDown(exam); return; }
   // Publik's gate: before any screen the Companion owns (the Knot, the dashboard, the tour).
   // There is no way past it but signing in; PUBLIK_SELF_TEST=1 prints the module's line and exits.
+  // Nūs's own anonymous stats start before the gate (contract amendment f, 2026-11-11): install on
+  // the first run ever, app_open now and once a day from the tray. So an install that never gets
+  // through the gate is still an install. Never awaited: a slow or missing network must not hold
+  // anything up. --autostart is the argument Windows passes when it starts Nus at sign-in.
+  if (!SMOKE) stats.boot({ via: process.argv.includes('--autostart') ? 'login' : 'manual' });
   if (publik) {
-    const ui = require('../companion/src/publik/gate-window').createGateUI({ updating: fs.existsSync(path.join(userData, 'companion-settings.json')), icon: path.join(__dirname, '..', 'companion', 'tray-icon.png') });
-    await publik.module.ensureSignedIn(ui);
+    // The gate window tells the stats which screen is up and which button was pressed (counts
+    // only, nothing from publik). Closing it quits; will-quit then sends signin_closed.
+    const ui = require('../companion/src/publik/gate-window').createGateUI({ updating: fs.existsSync(path.join(userData, 'companion-settings.json')), icon: path.join(__dirname, '..', 'companion', 'tray-icon.png'),
+      onScreen: gateCount.screen, onPress: gateCount.press });
+    const signed = await publik.module.ensureSignedIn(ui);
     ui.close();
+    gateCount.passed(signed && signed.choice);
   }
   examGuard.watch();
   const database = await open(path.join(userData, 'data'));
@@ -560,6 +578,7 @@ app.whenReady().then(async () => {
     // the Home window's own Settings button for the guide demo with no AI set up.
     tourPrefs: { get: () => api.getPreferences(), set: (k, v) => api.setPreference(k, v) },
     onTourState: s => send('home:tour', s),
+    onContact: s => send('home:contact', s),
     tourHomeTarget: async () => {
       const w = openHome();
       if (w.webContents.isLoading()) await new Promise(r => w.webContents.once('did-finish-load', r));
@@ -631,12 +650,9 @@ app.whenReady().then(async () => {
   // A chosen start-with-Windows is written again at each start, so it stays as
   // set and follows the exe if an update moved it (Clicky 1.0.50 had to fix exactly this).
   if (!SMOKE && typeof store.getSettings().startWithWindows === 'boolean') applyAutostart(store.getSettings().startWithWindows);
-  // install on the first run ever, app_open now and once a day from the tray.
-  // Never awaited: a slow or missing network must not hold the Knot up.
-  // Windows ties notifications to this id (the build's appId).
+  // Windows ties notifications to this id (the build's appId). (stats.boot now runs at the top,
+  // before the sign-in gate.)
   if (process.platform === 'win32') { try { app.setAppUserModelId('com.nus.companion'); } catch (_) { /* notifications only */ } }
-  // --autostart is the argument Windows passes when it starts Nus at sign-in.
-  if (!SMOKE) stats.boot({ via: process.argv.includes('--autostart') ? 'login' : 'manual' });
   // A signed-in computer whose link missed (offline at sign-in, or stats
   // turned back on) tries again once, 20 s in. Signed out: nothing at all.
   if (!SMOKE && getAccount().status().signedIn) setTimeout(() => getLink().ensure().then(() => getEntitlement().refresh()).then(() => send('home:account', accountState())).catch(() => {}), 20000).unref();

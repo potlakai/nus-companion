@@ -116,6 +116,31 @@
   }, e.currentTarget);
   $('#account-sync').onchange = e => run(async () => { paintAccount(await api.accountSync(e.target.checked)); notice(e.target.checked ? 'Settings sync on.' : 'Settings sync off. Nothing more about your settings is sent.'); }, e.target);
   api.on('home:account', a => paintAccount(a));
+  // The contact card (companion/src/contact.js): one ask for an email, a few
+  // minutes after something worked. The words come from the main process.
+  // contactHold: a save is under way or its thank-you is up. The main process
+  // pushes the new state (no longer due) before the save call returns, and that
+  // push must not hide the card before the thank-you is seen.
+  let contactHold = false;
+  function paintContact(c) {
+    if (!c || !c.words) return;
+    if (contactHold) return;
+    $('#contact-card').hidden = !c.due;
+    $('#contact-title').textContent = c.words.title;
+    $('#contact-copy').textContent = c.words.body;
+    $('#contact-save').textContent = c.words.button;
+    $('#contact-no').textContent = c.words.no;
+    $('#contact-email').placeholder = c.words.placeholder;
+  }
+  $('#contact-form').onsubmit = e => { e.preventDefault(); contactHold = true; run(async () => {
+    let r = null;
+    try { r = await api.contactGive($('#contact-email').value.trim()); } finally { if (!r || !r.ok) contactHold = false; }
+    $('#contact-note').textContent = r.message || '';
+    $('#contact-note').classList.toggle('error', !r.ok);
+    if (r.ok) { $('#contact-form').hidden = true; setTimeout(() => { contactHold = false; $('#contact-card').hidden = true; }, 6000); }
+  }, $('#contact-save')); };
+  $('#contact-no').onclick = e => run(async () => { paintContact(await api.contactDecline()); }, e.currentTarget);
+  api.on('home:contact', c => paintContact(c));
   async function setView(next) {
     view = next;
     $$('.view').forEach(el => el.classList.toggle('active',el.id==='view-'+next));
@@ -411,11 +436,11 @@
   api.on('home:tasks',p=>homeView.onTask(p));
   api.on('home:knot',w=>homeView.onKnot(w));
   api.on('home:voice',v=>homeView.onVoice(v));
-  window.addEventListener('focus',()=>run(async()=>{paintStatus(await api.status());paintAccount(await api.accountStatus());if(view==='saved')await renderSaved();if(view==='settings')await settings();if(view==='start'){await renderStart();await homeView.refresh();}}));
+  window.addEventListener('focus',()=>run(async()=>{paintStatus(await api.status());paintAccount(await api.accountStatus());paintContact(await api.contactStatus());if(view==='saved')await renderSaved();if(view==='settings')await settings();if(view==='start'){await renderStart();await homeView.refresh();}}));
   // The mark in the rail is the Knot itself: the overlay's engine, body only, at
   // rest. The canvas is 116 px because that is the frame the engine draws. It
   // stops drawing while this window is hidden or in the background.
   const mark=window.NusKnotEngine&&window.NusKnotEngine.mount({body:$('#brand-knot'),thread:null,light:{treatment:'none'},pauseWhenHidden:true});
   if(mark){window.addEventListener('blur',()=>mark.knot.pause());window.addEventListener('focus',()=>mark.knot.resume());}
-  run(async()=>{paintStatus(await api.status());paintAccount(await api.accountStatus());const st=await api.tourState();paintTour(st);await setView('start');});
+  run(async()=>{paintStatus(await api.status());paintAccount(await api.accountStatus());paintContact(await api.contactStatus());const st=await api.tourState();paintTour(st);await setView('start');});
 })();

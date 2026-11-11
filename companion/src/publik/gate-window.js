@@ -17,6 +17,14 @@ const INTRO = 'Nūs signs in with publik. publik is where Nūs is listed. It can
 const UPDATING = 'Signing in is new in 0.1.18. Everything you set up is still here. Your own Gemini key or Claude Code still works: pick Use my own key after you sign in.';
 const CHOICE_LINE = 'With publik, your question and a picture of your screen go to publik\'s AI to answer. With your own key they go to your AI company, as before. Voice commands, reminders and your notes stay on this computer either way.';
 
+// Pure: the name Nūs's own anonymous stats use for one of the module's screens (stats.js,
+// GATE_SCREENS). sign_in becomes waiting once the browser was opened. Exported for tests.
+function statScreen(screen) {
+  if (!screen || typeof screen.id !== 'string') return '';
+  if (screen.id === 'sign_in') return /^Waiting/.test(String(screen.note || '')) ? 'waiting' : 'sign_in';
+  return screen.id === 'choose' || screen.id === 'unreachable' ? screen.id : '';
+}
+
 // Pure: what the window shows for one of the module's screens. Exported for tests.
 function view(screen, opts = {}) {
   const lines = [];
@@ -45,8 +53,11 @@ function createGateUI(opts = {}) {
   const onPress = (event, action) => {
     if (!win || event.sender !== win.webContents || !pending) return;
     const p = pending; pending = null;
-    if (p.buttons.includes(action)) p.resolve(action); else pending = p;
+    if (p.buttons.includes(action)) { tell(opts.onPress, action); p.resolve(action); } else pending = p;
   };
+  // Nūs's own anonymous counts (opts.onScreen, opts.onPress): which screen is up and which
+  // button was pressed. Nothing from publik travels with them, and they never hold the gate up.
+  function tell(fn, value) { if (typeof fn === 'function' && value) { try { fn(value); } catch (_) { /* counting never breaks the gate */ } } }
   ipcMain.on('publik-gate:press', onPress);
 
   return {
@@ -57,7 +68,8 @@ function createGateUI(opts = {}) {
         return 'retry';
       }
       const w = ensureWindow();
-      const draw = () => { try { w.webContents.send('publik-gate:screen', view(screen, opts)); } catch (_) {} };
+      tell(opts.onScreen, statScreen(screen));
+      const draw =() => { try { w.webContents.send('publik-gate:screen', view(screen, opts)); } catch (_) {} };
       if (w.webContents.isLoading()) w.webContents.once('did-finish-load', draw); else draw();
       if (!shown) { w.once('ready-to-show', () => w.show()); if (!w.webContents.isLoading()) w.show(); shown = true; }
       return new Promise((resolve) => {
@@ -71,4 +83,4 @@ function createGateUI(opts = {}) {
   };
 }
 
-module.exports = { createGateUI, view, INTRO, UPDATING, CHOICE_LINE };
+module.exports = { createGateUI, view, statScreen, INTRO, UPDATING, CHOICE_LINE };
