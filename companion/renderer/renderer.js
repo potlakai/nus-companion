@@ -469,11 +469,11 @@
       if (item.own) {
         const gen = voiceGen;
         // Already made (it was queued while the line before it played), or make it now.
-        (item.audio ? Promise.resolve(item.audio) : item.promise || nus.voiceSay(item.line)).then((audio) => { if (gen !== voiceGen) { sayBusy = false; sayNext(); return; } if (!audio) throw new Error('no audio'); playPcm(audio, gen); }).catch(() => { if (gen !== voiceGen) { sayBusy = false; sayNext(); return; } speakSystem(item.line); });
+        (item.audio ? Promise.resolve(item.audio) : item.promise || nus.voiceSay(item.line)).then((audio) => { if (gen !== voiceGen) { sayBusy = false; sayNext(); return; } if (!audio) throw new Error('no audio'); if (item.first) vlog('voice: said in Fable: "' + item.line.slice(0, 40) + '"'); playPcm(audio, gen); }).catch(() => { if (gen !== voiceGen) { sayBusy = false; sayNext(); return; } if (item.first) vlog('voice: said in the Windows voice (Fable failed): "' + item.line.slice(0, 40) + '"'); speakSystem(item.line); });
         // Make the next line ahead while this one plays.
         const next = sayQueue[0];
         if (next && next.own && !next.promise) next.promise = nus.voiceSay(next.line).then((a) => { next.audio = a; return a; });
-      } else speakSystem(item.line);
+      } else { if (item.first) vlog('voice: said in the Windows voice (' + (ownVoice && ownVoice.installed ? 'Fable not ready' : 'Fable not installed') + '): "' + item.line.slice(0, 40) + '"'); speakSystem(item.line); }
     } catch (_) { sayBusy = false; }
   }
   // The acknowledgement ("On it.") is said the moment main knows the ask; the
@@ -481,8 +481,11 @@
   // off mid-word. Past this window the ack is long over and a reply restarts.
   let ackHoldUntil = 0;
   const ACK_HOLD_MS = 2500;
+  // A log line about speech never stops the speech.
+  function vlog(m) { try { if (nus.log) nus.log(m); } catch (_) { /* never in the way */ } }
   function say(text, opts) {
-    if (!companionVoiceEnabled || pttHeld) return;
+    const first = !!(opts && opts.restart);
+    if (!companionVoiceEnabled || pttHeld) { if (first && text) vlog('voice: not said (' + (pttHeld ? 'the talk key was held' : 'speech is off') + '): "' + String(text).slice(0, 40) + '"'); return; }
     if (!text) return;
     let restart = !opts || opts.restart !== false;
     const line = plainify(String(text)).slice(0, 300);
@@ -493,7 +496,7 @@
     // A ready-made line plays in the Knot's voice even while the model is
     // still loading: it is a file, not a synthesis.
     const own = Boolean(nus.voiceSay && ownVoice && (ownVoice.ready || (opts && opts.cached && ownVoice.installed)));
-    const item = { line, own };
+    const item = { line, own, first };
     if (own) item.promise = nus.voiceSay(line).then((a) => { item.audio = a; return a; });
     sayQueue.push(item);
     sayNext();
@@ -753,6 +756,7 @@
   async function openMicStream() {
     const found = await micFound();
     micFoundList = found;
+    nus.log('mic: ' + found.list.length + ' input device(s), default ' + (found.defaultLabel || 'unnamed') + (settings && settings.micDeviceId ? ', picked ' + (settings.micDeviceLabel || 'one') : ''));
     const want = NM.choose(found, settings || {});
     // The chosen one is not plugged in: the Windows default stands in, said once per device.
     if (want.why === 'missing' && micMissingSaid !== want.wanted) { micMissingSaid = want.wanted; showStatus((want.wanted || 'Your microphone') + ' is not plugged in. Using ' + (want.label || 'the Windows default') + '.'); }
@@ -840,7 +844,7 @@
       const next = await micFound();
       const r = NM.react(micFoundList, next, settings || {}, micStream ? micOpenId : null);
       micFoundList = next;
-      if (r.added.length || r.removed.length) nus.log('mic: devices changed (+' + r.added.length + ' -' + r.removed.length + ')');
+      if (r.added.length || r.removed.length) nus.log('mic: devices changed (+' + r.added.length + ' -' + r.removed.length + '), now ' + next.list.length);
       if (r.message) showStatus(r.message);
       if (r.reopen) reopenMic('device change');
       if (tourCard && tourCard.kind === 'mic') { renderTourMics(); if (!micStream && tourMic) setTourMicAgain(); }
@@ -1686,6 +1690,7 @@
   }
   function tourMicFailed() {
     if (!tourMic || !tourCard || tourCard.kind !== 'mic') return;
+    nus.log('tour mic: failed (' + (micLastError || 'no stream') + '), ' + ((micFoundList && micFoundList.list.length) || 0) + ' device(s)');
     trBody.textContent = NM.failLine(micLastError);
     renderTourActions([{ id: 'tour-mic-retry', label: 'Try again', primary: true }, { id: 'tour-mic-none', label: 'Go on and type' }]);
     renderTourMics();
@@ -1724,6 +1729,7 @@
     if (!kind || kind === tourHelpShown) return;
     tourHelpShown = kind;
     const others = ((micFoundList && micFoundList.list.length) || 0) > 1;
+    nus.log('tour mic: ' + kind + ' after ' + Math.round((Date.now() - tourMicAt) / 1000) + ' s on ' + (micLabel() || 'the default') + ', peak ' + tourPeak.toFixed(4) + ', ' + ((micFoundList && micFoundList.list.length) || 0) + ' device(s)');
     trStatus.textContent = NM.helpLine(kind, micLabel(), others);
     if (kind === 'dead' || !others) renderTourActions([{ id: 'tour-next', label: 'Continue', primary: true, disabled: true }, { id: 'tour-mic-none', label: 'Go on and type' }]);
     renderTourMics();

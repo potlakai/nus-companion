@@ -131,6 +131,24 @@ function keycaps(accelerator) {
   return String(accelerator || 'Control+Alt').split('+').map((k) => k.trim()).filter(Boolean).map((k) => (/^(commandorcontrol|control|ctrl)$/i.test(k) ? 'Ctrl' : /^return$/i.test(k) ? 'Enter' : k));
 }
 const continueActions = (disabled) => [{ id: 'tour-next', label: 'Continue', primary: true, disabled: !!disabled }];
+// A waiting Continue lights by itself after this long, so no card can hold the tour hostage (friend
+// test of 0.1.20, 2026-11-11: no microphone, a typed name that did not register, and no way on).
+const UNSTICK_MS = 8000;
+function stuck(actions) { return (actions || []).some((a) => a.id === 'tour-next' && a.disabled); }
+function unstuck(actions) { return (actions || []).map((a) => (a.id === 'tour-next' ? Object.assign({}, a, { disabled: false }) : a)); }
+// What a card waits to hear, typed or spoken: the name on the talk-key card, the first question on
+// the questions card. The same whether the microphone works or the person types (0.1.20 set nothing
+// for a typed name, so the typed name was dropped).
+function hearFor(step) { return step === STEP.key ? 'name' : step === STEP.questions ? 'q1' : null; }
+// A typed name: the same reading as a spoken one, and if that finds no name, the words themselves
+// when they look like a name (up to four words of letters). '' when it is not a name.
+function typedName(text) {
+  const n = nameFrom(text);
+  if (n) return n;
+  const words = String(text || '').trim().replace(/[.!?,;:]+$/g, '').split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 4 || words.some((w) => w.length > 24 || !/^[\p{L}][\p{L}'’-]*$/u.test(w))) return '';
+  return words.map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
 function qaRows(qa, current) { return (qa || []).map((row, i) => ({ q: row.q, a: row.a || '', current: i === current })); }
 // The two homes on card 5, the one in use marked.
 function homeChoices(island) {
@@ -166,7 +184,10 @@ function card(step, info = {}) {
       body: typed ? 'I cannot hear words on this computer yet, so type your name instead.' : 'Hold the keys, say your name, let go. I listen the whole time you hold them.',
       spoken: typed ? 'Type your name and I will remember it.' : 'Hold the keys, say your name, and let go.',
       chip: typed ? '' : 'My name is ...', status: typed ? '' : 'Waiting for you',
-      input: typed ? { action: 'tour-name', placeholder: 'Your name', label: 'Continue' } : null, actions: continueActions(true) });
+      // Typing is always offered (Pranav, 2026-11-11: "even if someone's mic works, give them the
+      // option to type their name just in case it doesn't pick it up correctly"). A typed name
+      // replaces a misheard one and moves on.
+      input: typed ? { action: 'tour-name', placeholder: 'Your name', label: 'Continue' } : { action: 'tour-name', placeholder: 'Or type your name', label: 'Continue' }, actions: continueActions(true) });
   }
   if (step === STEP.questions) {
     const typed = caps.whisper === false;
@@ -225,4 +246,4 @@ function cachedLines() {
 }
 
 module.exports = { HELLO_LINE, HELLO_UNTYPED_LINE, HELLO_ACTIONS, STEP, OF, QUESTIONS, HANDS_LINES, TRY_CHIPS, FIRST_WINS, firstWins, GUIDE_DEMO_LINE, guideChip, HANDS_CARD, HANDS_DONE_LINE, HANDS_UNSURE_LINE, NOT_ENGLISH_LINE, VOICE_MB, VOICE_LANDED_LINE, VOICE_FAILED_LINE, DASHBOARD_STOPS, DASHBOARD_DONE_LINE, DASHBOARD_TUCK, DASHBOARD_FAILED_LINE, HOME_CHANGED_LINE, KEY_OK_LINE, KEY_BAD_LINE, KEY_FAILED_LINE,
-  shouldShow, onFirstWindow, englishLocale, nameFrom, keyCheck, keycaps, continueActions, qaRows, homeChoices, sharingToggle, progressOf, card, tuckLine, spokenLines, cachedLines };
+  shouldShow, onFirstWindow, englishLocale, nameFrom, typedName, hearFor, UNSTICK_MS, stuck, unstuck, keyCheck, keycaps, continueActions, qaRows, homeChoices, sharingToggle, progressOf, card, tuckLine, spokenLines, cachedLines };

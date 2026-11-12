@@ -387,6 +387,10 @@ function createOverlayWindow() {
   win.webContents.on('did-finish-load', () => {
     win.showInactive();
     reboundOverlay();
+    // The voice engine is made before the sign-in window and says it is ready once; a window that
+    // was still loading then missed it and never used Fable (Pranav's try of 0.1.20: the hello line
+    // was not heard). Tell it now, every time it loads.
+    try { if (voice || global.__nusVoice) send('voice:state', getVoice().status()); } catch (_) { /* no voice */ }
     // Restore the persisted Knot-mark visibility and corner across restarts.
     send('knot:set', { hidden: store.getSettings().knotHidden === true });
     send('knot:corner', { corner: store.getSettings().knotCorner || 'br' });
@@ -1806,7 +1810,12 @@ function registerIpc() {
   companionIpc.on('companion:open-pane', (_e, url) => {
     if (typeof url === 'string' && ALLOWED_SYSTEM_PANES.has(url)) shell.openExternal(url).catch(() => {});
   });
-  companionIpc.on('companion:log', (_e, msg) => console.log('[companion]', msg));
+  companionIpc.on('companion:log', (_e, msg) => {
+    console.log('[companion]', msg);
+    // The microphone's own words (opened, failed, silent, devices) go in route.log too: an installed
+    // app keeps no console, and two friend tests lost why the microphone was not heard.
+    if (/^(mic[: ]|tour mic|voice: (said|not said))/.test(String(msg || ''))) routeLog(String(msg).slice(0, 300));
+  });
   companionIpc.on('companion:assignment:painted', (event, p) => {
     if (!isTrustedCompanionWebContents(event.sender) || !p) return;
     if (p.rect === null) assignmentBubbleRect = null;
@@ -3803,6 +3812,14 @@ function tourCardOut(extra) {
   // off is made again once it is quiet (companion/src/voice/lines.js).
   setTimeout(() => { if (tour) tourWarmLines('card ' + tour.step); }, 500);
   if (tour.step === Tour.STEP.guide && tour.caps.source) tourWatchFront();
+  tourUnstick(card);
+}
+// Every waiting Continue lights after Tour.UNSTICK_MS whatever happened (friend test of 0.1.20).
+function tourUnstick(card) {
+  if (!card || !Tour.stuck(card.actions)) return;
+  const T = tour, step = T.step;
+  clearTimeout(T.unstickTimer);
+  T.unstickTimer = setTimeout(() => { if (tour === T && T.step === step) { routeLog('tour: Continue lit by itself on step ' + step); send('tour:update', { actions: Tour.unstuck(card.actions) }); } }, Tour.UNSTICK_MS);
 }
 // Card 8's suggested question follows the window behind the card, until the
 // card goes or the first guide step tucks it.
@@ -3836,6 +3853,15 @@ function tourStart(from) {
 // No key, no model, and Hands may be off. Esc stops it.
 async function tourHello(T) {
   if (hooks.tourPrefs) hooks.tourPrefs.set('hello_done', true);
+  // The line is made in Fable while the note is typed, so it is said the moment the typing ends
+  // (Pranav: "it should say what's in the text box as soon as the notepad stopped typing").
+  const helloLine = (() => {
+    try {
+      const st = getVoice().status();
+      if (!st.installed || st.voice === 'system' || getLines().get(Tour.HELLO_LINE)) return Promise.resolve();
+      return getVoice().warm().then(() => getVoice().synth(Tour.HELLO_LINE)).then((a) => { getLines().put(Tour.HELLO_LINE, a); routeLog('hello line: made in Fable while typing'); });
+    } catch (e) { return Promise.reject(e); }
+  })().catch((e) => routeLog('hello line: not made ahead: ' + e.message));
   let result = { outcome: 'skipped', why: 'not on Windows', typed: 0 };
   if (process.platform === 'win32') {
     T.handsRunning = true; T.handsAbort = false;
@@ -3868,6 +3894,17 @@ async function tourHello(T) {
   if (tour !== T) return;
   T.caps.helloTyped = result.typed > 0;
   T.helloOutcome = result.outcome;
+  // The hello's line is the Knot's first word: in Fable, never dropped. If the engine is still
+  // loading (an already signed-in start reaches here 4 s after launch), wait for it, up to 8 s.
+  try {
+    const v = getVoice(), st = v.status();
+    if (st.installed && st.voice !== 'system' && !st.ready) { routeLog('hello line: waiting for Fable'); await Promise.race([v.warm(), sleep(8000)]); }
+    if (T.caps.helloTyped) await Promise.race([helloLine, sleep(6000)]);
+    const now = v.status();
+    send('voice:state', now);
+    routeLog('hello line: ' + (now.ready ? 'Fable ready, speaking' : now.voice === 'system' ? 'the Windows voice was chosen, speaking' : 'Fable not ready after 8 s, the Windows voice speaks'));
+  } catch (e) { routeLog('hello line: voice check failed: ' + e.message); }
+  if (tour !== T) return;
   tourCardOut();
 }
 // "Not now" on the hello card: the hello ends, the tour stays owed (the dashboard still offers it).
@@ -3888,8 +3925,10 @@ function tourHeard(text, source) {
   const t = String(text || '').trim();
   if (!tour || !t) return;
   if (tour.hear === 'name') {
-    const name = Tour.nameFrom(t);
-    if (!name) { send('tour:update', { status: 'I heard "' + t.slice(0, 60) + '". Hold the keys and say your name.' }); restoreKnotState(); return; }
+    const typed = source === 'typed';
+    const name = typed ? Tour.typedName(t) : Tour.nameFrom(t);
+    // Not a name: say so, and Continue still works (a person is never held on this card).
+    if (!name) { send('tour:update', { status: typed ? 'Just your first name is fine. Or press Continue.' : 'I heard "' + t.slice(0, 60) + '". Hold the keys and say your name.', actions: Tour.continueActions(false) }); restoreKnotState(); return; }
     // The card keeps listening until Continue: a second try ("it's P-R-A-N-A-V")
     // replaces the name instead of going to the reflex layer, which typed it
     // into the window behind (live 2026-11-03).
@@ -3897,8 +3936,11 @@ function tourHeard(text, source) {
     tour.name = name;
     try { getMemory().add('name.full', name, 'tour'); getMemory().save(); } catch (e) { routeLog('tour: name not kept: ' + e.message); }
     const line = (again ? 'Got it, ' : 'Hi, ') + name + '. That key works anywhere.';
-    send('tour:update', { status: line + ' Not quite? Say it again.', actions: Tour.continueActions(false) });
-    tourSay(line); restoreKnotState(); return;
+    send('tour:update', { status: line + (typed ? '' : ' Not quite? Say it again, or type it below.'), actions: Tour.continueActions(false) });
+    tourSay(line); restoreKnotState();
+    // Typed, with its own Continue pressed: the tour moves on by itself after the line.
+    if (typed) { const T = tour, step = T.step; setTimeout(() => { if (tour === T && T.step === step) tourNext(); }, 1500); }
+    return;
   }
   if (/^q[123]$/.test(String(tour.hear))) {
     const i = Number(tour.hear[1]) - 1, q = Tour.QUESTIONS[i];
@@ -4009,7 +4051,7 @@ function tourNext() {
   if (guide && guide.active()) guide.dismiss('tour');
   else if (tour.shown) send('guide:done', { sessionId: null });
   tour.step += 1;
-  tour.hear = tour.step === Tour.STEP.key && tour.caps.whisper ? 'name' : tour.step === Tour.STEP.questions ? 'q1' : null;
+  tour.hear = Tour.hearFor(tour.step);
   tour.shown = false;
   tourCardOut();
   if (tour.step === Tour.STEP.questions) setTimeout(() => { if (tour && tour.step === Tour.STEP.questions && tour.hear === 'q1') tourSay(Tour.QUESTIONS[0].q); }, 1800);

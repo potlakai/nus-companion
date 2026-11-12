@@ -7,7 +7,7 @@ module.exports = {
   appId: 'com.nus.companion',
   productName: 'Nus Companion',
   copyright: base.copyright,
-  extraMetadata: { name: 'nus-companion', version: '0.1.20', main: 'src/main-companion.js', publik: PUBLIK,
+  extraMetadata: { name: 'nus-companion', version: '0.1.21', main: 'src/main-companion.js', publik: PUBLIK,
     description: 'Nūs Companion: the Knot that hears you and acts, on its own.' },
   directories: { output: 'dist-companion', buildResources: 'build' },
   // companion/** carries companion/src/stats.js (anonymous usage stats, plain

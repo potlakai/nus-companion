@@ -16,7 +16,7 @@ const { dirname, join } = require('node:path');
 const { createInterface } = require('node:readline/promises');
 
 const APP_SLUG = "nus";
-const APP_VERSION = "0.1.20";
+const APP_VERSION = "0.1.21";
 /** false: the app calls no model. It still signs in and counts users; it skips the plan screen. */
 const USES_AI = true;
 const ORIGIN = process.env.PUBLIK_ORIGIN || "https://publikhq.com"; // PUBLIK_ORIGIN: tests only
