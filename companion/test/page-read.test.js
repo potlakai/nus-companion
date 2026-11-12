@@ -96,10 +96,14 @@ test('the probe reads the window\'s words read-only, skips password fields, and 
 
 test('the Companion sends page asks to the window text first and to the screenshot only when it gives none', () => {
   const main = read('index.js');
-  assert.match(main, /function ownPath\(text\) \{ return Boolean\(rewriteAsk\(text\) \|\| parseReminder\(text\) \|\| readsPage\(text\) \|\| parseRecallAsk\(text\)\); \}/);
+  assert.match(main, /function ownPath\(text\) \{ return Boolean\(rewriteAsk\(text\) \|\| parseReminder\(text\) \|\| readsPage\(text\) \|\| screenAsk\(text\) \|\| parseRecallAsk\(text\)\); \}/);
   const slow = main.slice(main.indexOf('function routeUtteranceSlow('), main.indexOf('function routeAnswer('));
-  assert.match(slow, /const pg = readsPage\(kind\.text\);/);
-  assert.match(slow, /if \(!done\) \{[^}]*getGuide\(\)\.start\(kind\.text/, 'no text: the screenshot path');
+  assert.match(slow, /const pg = screenAsk\(kind\.text\) \|\| readsPage\(kind\.text\);/);
+  // No text from the window: the screenshot, answered in words (2026-11-11:
+  // it used to start the pointing guide, which can only name a click).
+  assert.match(slow, /if \(!done\) \{[^}]*getGuide\(\)\.start\(kind\.text, by, \{ askedAt: heardAt, answer: pg\.mode \}\)/, 'no text: the screenshot answer');
+  assert.match(slow, /if \(pg\.page === false\) \{[^}]*getGuide\(\)\.start\(kind\.text, by, \{ askedAt: heardAt, answer: pg\.mode \}\); return; \}/, 'a look at the screen goes straight to the screenshot answer');
+  assert.doesNotMatch(slow, /getGuide\(\)\.start\(kind\.text, (?:by|'typed'|'voice'), \{ askedAt: heardAt \}\)/, 'never the pointer for a page ask');
   const fn = main.slice(main.indexOf('async function answerPage('), main.indexOf('// The chord\'s final key'));
   assert.match(fn, /probe\.request\('uia\.text', \{ hwnd: fg\.hwnd, ignorePid: process\.pid, max: 200000, budgetMs: 2500 \}/);
   assert.match(fn, /await sleep\(400\); r = await once\(\);/, 'one retry for a bare Chromium read');

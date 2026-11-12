@@ -31,6 +31,54 @@ function cleanRects(list) {
   }
   return out;
 }
+// The freeze under a resting Knot (found 2026-11-11, on every release since this window
+// arrived in 0.1.15): Chrome, Edge, every Electron app (the Claude app, the Nus dashboard) and
+// Firefox stop drawing a window they believe is covered. They decide that from the windows
+// above them, and a window whose shape is ONE plain rectangle counts as covering its whole
+// frame, which here is the whole screen. With only the Knot showing the shape was one
+// rectangle, so every such app under it stopped painting: nothing typed or scrolled showed
+// until the bubble or the greeting box added a second rectangle, or a hover made the window
+// click-through. Measured with scripts/lag/rest-freeze.cjs: 0 frames a second under a resting
+// Knot, 60 with either of the two guards below.
+//   1. The shape is never one plain rectangle: when the controls add up to exactly their
+//      bounding box, one corner pixel is left out of it. Nobody can see or miss one pixel.
+//   2. The window is a tool window (see ensure), which those apps never count as a cover.
+// Either one is enough alone; both are kept so a change to one cannot bring the freeze back.
+function unionBox(rects) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const r of rects) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.width); y1 = Math.max(y1, r.y + r.height); }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+// The area the rectangles cover together, overlaps counted once.
+function unionArea(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.width]))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.flatMap((r) => [r.y, r.y + r.height]))].sort((a, b) => a - b);
+  let area = 0;
+  for (let i = 0; i + 1 < xs.length; i++) for (let j = 0; j + 1 < ys.length; j++) {
+    if (rects.some((r) => r.x <= xs[i] && r.x + r.width >= xs[i + 1] && r.y <= ys[j] && r.y + r.height >= ys[j + 1])) area += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+  }
+  return area;
+}
+function isPlainRectangle(rects) {
+  if (!rects.length) return false;
+  const box = unionBox(rects);
+  return unionArea(rects) === box.width * box.height;
+}
+// The shape handed to the window: the same rectangles, minus the top right pixel of their
+// bounding box when together they would make one plain rectangle.
+function shapeFor(rects) {
+  if (!isPlainRectangle(rects)) return rects;
+  const box = unionBox(rects);
+  if (box.width < 2 || box.height < 2) return rects;      // a line or a dot: nothing to leave out
+  const px = box.x + box.width - 1, py = box.y;
+  const out = [];
+  for (const r of rects) {
+    if (!(px >= r.x && px < r.x + r.width && py >= r.y && py < r.y + r.height)) { out.push(r); continue; }
+    if (r.width > 1) out.push({ x: r.x, y: r.y, width: r.width - 1, height: 1 });
+    if (r.height > 1) out.push({ x: r.x, y: r.y + 1, width: r.width, height: r.height - 1 });
+  }
+  return out;
+}
 const TYPES = new Set(['down', 'move', 'up', 'cancel', 'menu']);
 function cleanEvent(ev) {
   if (!ev || !TYPES.has(ev.type)) return null;
@@ -39,7 +87,7 @@ function cleanEvent(ev) {
   return { type: ev.type, x, y, id: Number(ev.id) || 1, kind: ev.kind === 'mouse' || ev.kind === 'pen' ? ev.kind : 'touch', button: Number(ev.button) || 0 };
 }
 
-function createTouchPad({ BrowserWindow, ipcMain, page, preload, overlayBounds, topmost, onEvent, log = () => {}, now = () => Date.now() }) {
+function createTouchPad({ BrowserWindow, ipcMain, page, preload, overlayBounds, topmost, onEvent, log = () => {}, now = () => Date.now(), platform = process.platform }) {
   let pad = null, ready = false, shown = false;
   let rects = [], shapeKey = '', boundsKey = '', through = null;
   let touchMode = false, touchAt = 0, cursorAt = null, topmostAt = 0;
@@ -58,6 +106,8 @@ function createTouchPad({ BrowserWindow, ipcMain, page, preload, overlayBounds, 
     if (pad && !pad.isDestroyed()) return;
     const b = overlayBounds();
     pad = new BrowserWindow({ x: b.x, y: b.y, width: b.width, height: b.height, frame: false, transparent: true, hasShadow: false, resizable: false, movable: false, skipTaskbar: true, focusable: false, fullscreenable: false, show: false,
+      // A tool window: apps under it never treat it as covering them (see shapeFor above).
+      ...(platform === 'win32' ? { type: 'toolbar' } : {}),
       webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     ready = false; shown = false; shapeKey = ''; boundsKey = ''; through = null; topmostAt = 0;
     const mine = pad;
@@ -84,7 +134,7 @@ function createTouchPad({ BrowserWindow, ipcMain, page, preload, overlayBounds, 
     const bk = [b.x, b.y, b.width, b.height].join();
     if (bk !== boundsKey) { boundsKey = bk; pad.setBounds(b); }
     const sk = JSON.stringify(rects);
-    if (sk !== shapeKey) { shapeKey = sk; pad.setShape(rects); }
+    if (sk !== shapeKey) { shapeKey = sk; pad.setShape(shapeFor(rects)); }
     // The mouse over a control: the overlay has it, so the pad stands aside.
     const over = Boolean(cursor) && rects.some((r) => cursor.x - b.x >= r.x && cursor.x - b.x < r.x + r.width && cursor.y - b.y >= r.y && cursor.y - b.y < r.y + r.height);
     const pass = over && !touchMode;
@@ -105,4 +155,4 @@ function createTouchPad({ BrowserWindow, ipcMain, page, preload, overlayBounds, 
   return { setRects: (list) => { rects = cleanRects(list); }, tick, sawTouch, close, touching: () => touchMode, active: () => shown };
 }
 
-module.exports = { createTouchPad, cleanRects, cleanEvent, CHANNEL, TOUCH_LASTS_MS };
+module.exports = { createTouchPad, cleanRects, cleanEvent, shapeFor, isPlainRectangle, CHANNEL, TOUCH_LASTS_MS };

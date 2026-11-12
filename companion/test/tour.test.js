@@ -28,57 +28,48 @@ test('a new install sees the tour once; an upgrade never; done or skipped it sta
   assert.match(main, /tourMod\.shouldShow\(api\.getPreferences\(\)\) \|\| SMOKE\) openHome\(\)/, 'a first window still on the tour opens again next launch');
 });
 
-test('eleven cards in the planned order, one or two spoken sentences each, no em dashes, no "Home"', () => {
+test('ten cards in the planned order, one or two spoken sentences each, no em dashes, no "Home"', () => {
   const cards = all(full, 'Maya');
-  assert.equal(T.OF, 11);
-  assert.deepEqual(cards.map((c) => c.kind), ['voice', 'mic', 'key', 'questions', 'home', 'sharing', 'ai', 'guide', 'hands', 'dashboard', 'done']);
-  assert.deepEqual(Object.keys(T.STEP), cards.map((c) => c.kind), 'STEP names every card in order');
-  assert.deepEqual(cards.map((c) => c.title), ['This is my voice', 'Now, can I hear you?', 'This is how you talk to me', 'Three quick questions', 'Where should I live?', 'On a call or a recording', 'Who answers', 'I see what you see', 'I can use the mouse too', 'The dashboard', "That's it, Maya."]);
-  assert.deepEqual(cards.map((c) => c.skip), [true, true, true, true, true, true, true, true, true, true, false]);
+  assert.equal(T.OF, 10);
+  assert.deepEqual(cards.map((c) => c.kind), ['mic', 'key', 'questions', 'home', 'sharing', 'ai', 'guide', 'hands', 'dashboard', 'done']);
+  assert.deepEqual(Object.keys(T.STEP), ['hello'].concat(cards.map((c) => c.kind)), 'STEP names every card in order, the uncounted hello first');
+  assert.deepEqual(cards.map((c) => c.title), ['Now, can I hear you?', 'This is how you talk to me', 'Three quick questions', 'Where should I live?', 'On a call or a recording', 'Who answers', 'I see what you see', 'I can use the mouse too', 'The dashboard', "That's it, Maya."]);
+  assert.deepEqual(cards.map((c) => c.skip), [true, true, true, true, true, true, true, true, true, false]);
   for (const c of cards) {
-    assert.equal(c.of, 11); assert.equal(c.progress, null, 'no download, no progress line');
+    assert.equal(c.of, 10); assert.equal(c.progress, null, 'no download, no progress line');
     assert.ok(c.spoken && c.spoken.split(/[.!?]\s/).length <= 3, c.title + ': at most three sentences');
     assert.doesNotMatch(c.title + c.body + c.spoken + (c.note || ''), /—/, 'no em dashes');
     assert.doesNotMatch(c.title + c.body + c.spoken + (c.note || ''), /\bHome\b/, 'the window is the dashboard');
   }
-  assert.deepEqual(cards[2].keys, ['Ctrl', 'Alt']);
-  assert.equal(cards[2].chip, 'My name is ...');
-  assert.equal(cards[2].status, 'Waiting for you');
-  assert.deepEqual(cards[3].qa.map((r) => r.q), T.QUESTIONS.map((q) => q.q));
-  assert.equal(cards[7].chip, 'What is this window for?', 'until the window in front is known');
-  assert.match(cards[8].body, /Esc to stop me/);
-  assert.deepEqual(cards[9].actions, T.continueActions(true), 'it comes up by itself, Continue lights when the walk ends');
+  assert.deepEqual(cards[1].keys, ['Ctrl', 'Alt']);
+  assert.equal(cards[1].chip, 'My name is ...');
+  assert.equal(cards[1].status, 'Waiting for you');
+  assert.deepEqual(cards[2].qa.map((r) => r.q), T.QUESTIONS.map((q) => q.q));
+  assert.equal(cards[6].chip, 'What is this window for?', 'until the window in front is known');
+  assert.match(cards[7].body, /Esc to stop me/);
+  assert.deepEqual(cards[8].actions, T.continueActions(true), 'it comes up by itself, Continue lights when the walk ends');
   // The first win (plan 2026-11-06): real buttons, not text to read.
-  assert.equal(cards[10].chips, undefined);
-  assert.deepEqual(cards[10].actions.map((a) => a.id), T.firstWins(full).map((w) => 'tour-try-' + w.struggle).concat('tour-finish'));
+  assert.equal(cards[9].chips, undefined);
+  assert.deepEqual(cards[9].actions.map((a) => a.id), T.firstWins(full).map((w) => 'tour-try-' + w.struggle).concat('tour-finish'));
   assert.deepEqual(T.card(T.STEP.done, { caps: { keyReady: true } }).actions.map((a) => a.id), ['tour-try-feeds', 'tour-try-homework_start', 'tour-try-find_in_apps', 'tour-finish'], 'with AI, the screen one');
-  assert.equal(cards[10].actions.filter((a) => a.primary).length, 1);
+  assert.equal(cards[9].actions.filter((a) => a.primary).length, 1);
   // Length is not the constraint (Pranav, 2026-11-02); still, the Knot's own
   // words stay under three minutes at a slow 150 a minute.
   const words = T.spokenLines(full).join(' ').split(/\s+/).length;
   assert.ok(words < 450, 'spoken words: ' + words);
-  assert.equal(T.card(11, { caps: full }).title, "That's it.", 'no name, no name');
+  assert.equal(T.card(10, { caps: full }).title, "That's it.", 'no name, no name');
   for (const line of T.spokenLines(full).concat(T.DASHBOARD_STOPS.map((s) => s.line), [T.DASHBOARD_DONE_LINE, T.HOME_CHANGED_LINE, T.KEY_OK_LINE, T.KEY_BAD_LINE, T.KEY_FAILED_LINE])) assert.doesNotMatch(line, /—|\bHome\b/, line);
 });
 
-test('card 1 is the voice: the Windows voice stands in, Fable is one download with a Later, installed it is just the voice', () => {
-  const none = T.card(1, { caps: Object.assign({}, full, { voice: { installed: false } }) });
-  assert.equal(none.title, 'This is my voice, for now');
-  assert.match(none.body, /Windows voice standing in/); assert.match(none.body, /350 MB/); assert.match(none.body, /keeps downloading while we go on/);
-  assert.deepEqual(none.actions.map((a) => a.id), ['tour-voice-get', 'tour-next']);
-  assert.equal(none.actions[1].label, 'Later');
-  assert.match(none.note, /dashboard, under Settings, Voice/);
-  const going = T.card(1, { caps: Object.assign({}, full, { voice: { installed: false, downloading: { got: 35, total: 100 } } }) });
-  assert.match(going.body, /on its way/); assert.deepEqual(going.progress, { pct: 35, label: 'Fable 35%' }); assert.equal(going.status, '');
-  assert.deepEqual(going.actions, T.continueActions(false));
-  assert.deepEqual(T.card(4, { caps: going.progress ? Object.assign({}, full, { voice: { installed: false, downloading: { got: 35, total: 100 } } }) : full }).progress, { pct: 35, label: 'Fable 35%' }, 'the line rides on every later card while it runs');
-  const inn = T.card(1, { caps: full });
-  assert.equal(inn.title, 'This is my voice'); assert.match(inn.body, /Fable, my own voice/); assert.deepEqual(inn.actions, T.continueActions(false));
-  assert.equal(T.progressOf({ downloading: { got: 100, total: 100 } }).label, 'Fable: unpacking', 'all in, it still has to unpack');
-  assert.equal(T.progressOf(null), null); assert.equal(T.progressOf({ downloading: null }), null);
-  assert.equal(T.VOICE_LANDED_LINE, 'That is me now.');
-  assert.match(T.VOICE_FAILED_LINE, /dashboard, under Settings, Voice/);
-  assert.doesNotMatch(T.VOICE_FAILED_LINE, /hash/, 'a person is never told about hashes');
+test('no voice card: the voice is not a step, and no card shows a download line', () => {
+  assert.equal(T.STEP.voice, undefined, 'Pranav, 2026-11-11: no voice step');
+  const going = Object.assign({}, full, { voice: { installed: false, downloading: { got: 35, total: 100 } } });
+  for (let s = 0; s <= T.OF; s++) {
+    const c = T.card(s, { caps: going });
+    assert.notEqual(c.kind, 'voice'); assert.equal(c.progress, null, 'card ' + s + ' shows no download line');
+    assert.doesNotMatch(c.title + c.body + (c.note || ''), /download|Fable/i, 'card ' + s + ' says nothing about the voice');
+  }
+  assert.ok(!T.spokenLines(full).includes(T.VOICE_LANDED_LINE), 'nothing announces the switch');
 });
 
 test('the settings cards: where the Knot lives, screen sharing, who answers', () => {
@@ -108,35 +99,35 @@ test('the settings cards: where the Knot lives, screen sharing, who answers', ()
   assert.equal(T.keyCheck('').kind, ''); assert.equal(T.keyCheck('sk-ant-short').kind, ''); assert.match(T.keyCheck('sk-ant-short').message, /cut off/);
 });
 
-test('card 10 walks the dashboard: four stops on the rail, the name "the dashboard" throughout', () => {
+test('card 9 walks the dashboard: four stops on the rail, the name "the dashboard" throughout', () => {
   assert.deepEqual(T.DASHBOARD_STOPS.map((s) => s.view), ['mynus', 'saved', 'map', 'folders', 'settings']);
   for (const s of T.DASHBOARD_STOPS) assert.match(s.line, /^(My Nūs|Saved|Map|Folders|Settings): /);
   assert.match(T.DASHBOARD_STOPS[4].line, /keys, my voice, where I live, and screen sharing/);
   assert.doesNotMatch(T.DASHBOARD_STOPS.map((s) => s.line).join(' '), /tidy/, 'Folders reads; it never tidies');
   assert.match(T.DASHBOARD_DONE_LINE, /^That is the dashboard\./);
-  assert.equal(T.tuckLine(8, T.DASHBOARD_TUCK), 'Step 8 of 11. This is the dashboard.');
-  const card = T.card(10, { caps: full });
+  assert.equal(T.tuckLine(8, T.DASHBOARD_TUCK), 'Step 8 of 10. This is the dashboard.');
+  const card = T.card(9, { caps: full });
   assert.equal(card.title, 'The dashboard'); assert.match(card.body, /beside this card/);
 });
 
 test('every step has a path with nothing set up, and the card says so', () => {
   const cards = all(bare);
-  assert.equal(cards[1].note, 'Nūs speaks English for now.', 'a non-English locale gets one line, never a translation');
-  assert.equal(T.card(2, { caps: full }).note, '');
-  assert.match(cards[2].body, /type your name instead/);
-  assert.deepEqual(cards[2].input, { action: 'tour-name', placeholder: 'Your name', label: 'Continue' });
-  assert.match(cards[3].status, /Type your answer/);
-  assert.match(cards[7].body, /No AI is set up yet, so I will show you on the dashboard/);
-  assert.deepEqual(cards[7].actions, [{ id: 'tour-show', label: 'Show me', primary: true }]);
-  assert.match(cards[8].body, /not available on this computer yet/);
-  assert.equal(cards[8].actions[0].id, 'tour-next');
+  assert.equal(cards[0].note, 'Nūs speaks English for now.', 'a non-English locale gets one line, never a translation');
+  assert.equal(T.card(1, { caps: full }).note, '');
+  assert.match(cards[1].body, /type your name instead/);
+  assert.deepEqual(cards[1].input, { action: 'tour-name', placeholder: 'Your name', label: 'Continue' });
+  assert.match(cards[2].status, /Type your answer/);
+  assert.match(cards[6].body, /No AI is set up yet, so I will show you on the dashboard/);
+  assert.deepEqual(cards[6].actions, [{ id: 'tour-show', label: 'Show me', primary: true }]);
+  assert.match(cards[7].body, /not available on this computer yet/);
+  assert.equal(cards[7].actions[0].id, 'tour-next');
   assert.equal(T.englishLocale('en-US'), true); assert.equal(T.englishLocale('en'), true);
   assert.equal(T.englishLocale('mr-IN'), false); assert.equal(T.englishLocale('de'), false); assert.equal(T.englishLocale(''), false);
   // The lines kept as files cover every path, and none carries a name.
   const cached = T.cachedLines();
   assert.ok(cached.length >= 30, 'cached lines: ' + cached.length);
   for (const l of cached) assert.doesNotMatch(l, /Maya/);
-  assert.ok(cached.includes(cards[7].spoken) && cached.includes(T.card(T.STEP.ai, { caps: Object.assign({}, full, { cli: true }) }).spoken));
+  assert.ok(cached.includes(cards[6].spoken) && cached.includes(T.card(T.STEP.ai, { caps: Object.assign({}, full, { cli: true }) }).spoken));
 });
 
 test('the name is heard by doing: "my name is Maya" and a bare name count, a sentence does not', () => {
@@ -172,12 +163,10 @@ test('main runs the steps: the heard words go to the tour first, the demos have 
   assert.match(block, /Tour\.englishLocale\(app\.getLocale\(\)\)/, 'the locale is read, never guessed');
   assert.doesNotMatch(block, /tour\.step === \d/, 'steps are named through Tour.STEP, never numbered');
   // The new cards.
-  assert.match(block, /getVoice\(\)\.install\('fable'\)/, 'card 1 starts the real download');
-  assert.match(block, /if \(info\.downloading\) send\('tour:update', Object\.assign\(\{ progress: Tour\.progressOf\(info\) \}/, 'the progress line follows the voice module');
-  assert.ok(block.indexOf("await getVoice().warm();") > 0 && block.indexOf("await getVoice().warm();") < block.indexOf('tourSay(Tour.VOICE_LANDED_LINE)'), 'the first line in Fable waits for the model, so it is never said in the Windows voice');
-  assert.match(block, /applySettingsPatch\(\{ voice: 'fable' \}\)/, 'the same write as the dashboard\'s switch');
+  // The voice is equipped by itself, outside the tour, with nothing shown (voiceAutoEquip).
+  assert.doesNotMatch(block, /getVoice\(\)\.install|tourVoiceGet|progressOf/, 'the tour neither starts nor shows the download');
   assert.match(main, /keep: \(line\) => LINES\.includes\(line\) \|\| TOUR_LINES\.has\(line\)/, 'the line cache keeps the tour\'s lines, or making them ahead does nothing');
-  assert.match(main, /onState: \(s\) => \{ send\('voice:state', s\); if \(tour\) tourVoiceState\(s\);/, 'the voice module reports to the tour');
+  assert.match(main, /const onState = \(s\) => \{ send\('voice:state', s\); if \(tour\) tourVoiceState\(s\);/, 'the voice module reports to the tour');
   assert.match(block, /applySettingsPatch\(\{ knotIsland: island \}\)/, 'card 5 is the real island setting');
   assert.match(block, /applySettingsPatch\(\{ hideFromCapture: !captureHidden\(\) \}\)/, 'card 6 is the real capture switch');
   assert.match(block, /hooks\.tourSaveKey\(kind, value\)/, 'card 7 saves through the same door as the Keys card');
@@ -257,7 +246,7 @@ test('the sheet morphs in place, folds into the tuck in one motion, and never hi
 test('the dashboard\'s Get started is one card that starts the tour, and the window is the dashboard everywhere a person reads it', () => {
   const home = read('companion/home/index.html'), hjs = read('companion/home/home.js'), pre = read('companion/home/preload.js'), main = read('src/main-companion.js');
   assert.match(home, /<article class="glass card tour-card" id="tour-card">/);
-  assert.match(home, /A few minutes with the Knot: its voice, your mic, the talk key, three questions, where it lives, screen sharing, who answers, two demos on your screen, and this dashboard\./);
+  assert.match(home, /A few minutes with the Knot: your mic, the talk key, three questions, where it lives, screen sharing, who answers, two demos on your screen, and this dashboard\./);
   for (const id of ['tour-start', 'tour-skip', 'tour-state', 'start-foot']) assert.match(home, new RegExp('id="' + id + '"'), id);
   assert.doesNotMatch(home, /start-use-claude|start-gemini-key|start-try|start-ask/, 'the three steps are gone');
   assert.doesNotMatch(home.slice(home.indexOf('id="view-start"'), home.indexOf('id="view-saved"')), /—/);

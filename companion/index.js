@@ -52,6 +52,7 @@ const { createImportWatcher } = require('./src/recall/watcher');
 const { readExportZip, importedLine } = require('./src/recall/ingest');
 const { needsScreen, isTask, carriesText, handsTakes, launchClause, rewriteAsk, readsPage, greeting, messageAsk, bareLaunch, fieldFollowUp, endsMidPhrase, trimCutOff } = require('./src/reflex/rules');
 const { buildPageAsk, preparePage } = require('./src/page-read');
+const { screenAsk, vagueAsk, CLARIFY_LINE } = require('./src/guide/screen-ask');
 const { rewriteInPlace } = require('./src/rewrite');
 const { parseReminder, createReminders, whenLabel, durationWords, describeList, panelRows: reminderRows } = require('./src/reminders');
 const { tellText } = require('./src/feedback');
@@ -59,6 +60,7 @@ const { HandsAgent, isSwitcher } = require('./src/hands/agent');
 const { createActions, createFileSearch, createBrowserLaunch, createDefaultBrowser } = require('./src/hands/actions');
 const handsConsent = require('./src/hands/consent');
 const Tour = require('./src/tour');
+const Hello = require('./src/hello');
 const { loadCatalog } = require('./src/reflex/catalog');
 const { normRectFromPhys: normRect } = require('./src/guide/verify');
 const { createLedger, activityView } = require('./src/usage-ledger');
@@ -1523,7 +1525,7 @@ function registerShortcuts() {
 }
 
 const OVERLAY_BOOLEANS = new Set(['speakReplies', 'onboarded', 'introSeen', 'hideFromCapture', 'openMic', 'sounds', 'proactive', 'focusGuard', 'smart', 'tasks', 'knotHidden', 'knotIsland', 'hands']);
-const OVERLAY_STRINGS = new Set(['packPath', 'sparPath', 'resumeContext']);
+const OVERLAY_STRINGS = new Set(['packPath', 'sparPath', 'resumeContext', 'micDeviceId', 'micDeviceLabel']);
 function overlayPatch(patch) {
   const clean = {};
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return clean;
@@ -2340,7 +2342,11 @@ function memoryBlock() {
 let voice = null;
 function getVoice() {
   if (!voice) {
-    voice = createVoice({ userData: app.getPath('userData'), settings: { get: () => store.getSettings() }, log: (m) => console.log('[voice]', m), onState: (s) => { send('voice:state', s); if (tour) tourVoiceState(s); if (hooks.onVoiceState) { try { hooks.onVoiceState(s); } catch (_) { /* host gone */ } } } });
+    // The host made one before the sign-in window and is loading Fable in it (src/main-companion.js);
+    // the same instance is used here, never a second engine.
+    const onState = (s) => { send('voice:state', s); if (tour) tourVoiceState(s); if (hooks.onVoiceState) { try { hooks.onVoiceState(s); } catch (_) { /* host gone */ } } };
+    voice = global.__nusVoice || createVoice({ userData: app.getPath('userData'), settings: { get: () => store.getSettings() }, log: (m) => console.log('[voice]', m) });
+    voice.setOnState(onState);
     app.on('before-quit', () => { try { if (lineCache) lineCache.cancel(); voice.close(); } catch (_) { /* best effort */ } });
   }
   return voice;
@@ -3737,8 +3743,14 @@ function takeNeutral() {
 // but one: the key check on card 7 is the host's own one-word ping, the same
 // one the dashboard's Keys card runs, and only when a key was just pasted.
 let tour = null;   // { step, name, qa, hear, caps, from, handsRunning, handsAbort, shown, voiceWas }
+// room: false when the disk holding the voice has under 2 GB free, so the download is not
+// started by itself (the voice is about 350 MB packed and more unpacked). Unknown counts as room.
+function voiceRoom() {
+  try { const st = fs.statfsSync(app.getPath('userData')); return Number(st.bavail) * Number(st.bsize) >= 2 * 1024 ** 3; } catch (_) { return true; }
+}
 function tourVoiceInfo() {
-  try { const st = getVoice().status(); return { installed: !!st.installed, downloading: st.downloading || null, label: st.label || '' }; } catch (_) { return { installed: false, downloading: null, label: '' }; }
+  const optedOut = store.getSettings().voice === 'system';
+  try { const st = getVoice().status(); return { installed: !!st.installed, downloading: st.downloading || null, label: st.label || '', room: st.installed ? true : voiceRoom(), optedOut }; } catch (_) { return { installed: false, downloading: null, label: '', room: true, optedOut }; }
 }
 function tourCaps() {
   let whisper = false;
@@ -3810,37 +3822,67 @@ function tourWatchFront() {
 }
 function tourStart(from) {
   if (tour) { tourCardOut({ spoken: '' }); return; }
-  tour = { step: 1, name: '', qa: Tour.QUESTIONS.map((q) => ({ q: q.q, a: '' })), hear: null, caps: tourCaps(), from: from || 'home', handsRunning: false, handsAbort: false, shown: false, voiceWas: null };
+  tour = { step: from === 'hello' ? Tour.STEP.hello : 1, name: '', qa: Tour.QUESTIONS.map((q) => ({ q: q.q, a: '' })), hear: null, caps: tourCaps(), from: from || 'home', handsRunning: false, handsAbort: false, shown: false, voiceWas: null };
   tour.voiceWas = tour.caps.voice.installed;
   routeLog('tour start (' + tour.from + ')');
   handsAppList();   // the app catalog loads now, so Notepad is known by card 9
   tourAskAi();
+  if (from === 'hello') { tourHello(tour).catch((e) => { routeLog('hello: ' + e.message); if (tour) { tour.caps.helloTyped = false; tourCardOut(); } }); return; }
   tourCardOut();
 }
-// The voice download, as the voice module reports it: a thin progress line on
-// whatever card is up. The first line in Fable comes from tourVoiceGet.
+// The first-run hello (companion/src/hello.js): the note typed live into a Notepad window the
+// Companion opened itself, then the hello card. Its rules are in hello.js; the helper (keys.slow)
+// stops at once if that window leaves the front or the person presses a key or a mouse button.
+// No key, no model, and Hands may be off. Esc stops it.
+async function tourHello(T) {
+  if (hooks.tourPrefs) hooks.tourPrefs.set('hello_done', true);
+  let result = { outcome: 'skipped', why: 'not on Windows', typed: 0 };
+  if (process.platform === 'win32') {
+    T.handsRunning = true; T.handsAbort = false;
+    armEsc();
+    send('hands:state', { active: true, waiting: false });
+    // The helper that brings Notepad forward and types is a PowerShell process that takes a couple of
+    // seconds to start on a slow PC: up first, so the bring-forward is not missed.
+    try { await getHands().request('ping', {}, 8000); } catch (e) { routeLog('hello: helper not ready: ' + e.message); }
+    const { spawn } = require('child_process');
+    const winBuild = Number(String(require('os').release()).split('.')[2]) || 0;
+    try {
+      result = await Hello.run({
+        launch: () => { const c = spawn('notepad.exe', [], { detached: true, stdio: 'ignore', windowsHide: false }); c.on('error', (e) => routeLog('hello: notepad: ' + e.message)); c.unref(); },
+        // The real foreground, our own windows included (no ignorePid): Notepad must truly be in front.
+        front: () => (probeReady() ? probe.request('fg', {}, 1500) : Promise.resolve(null)),
+        slow: (args) => getHands().request('keys.slow', args, 3000 + String(args.text || '').length * (Hello.CHAR_MS + 40)),
+        nudge: () => getHands().request('win.activate', { name: 'Notepad' }, 2500),
+        press: (keys, hwnd) => getHands().request('keys.press', { keys: keys === 'ctrl+n' ? [0x11, 0x4E] : [], hwnd, selfPid: process.pid }, 2000),
+        aborted: () => tour !== T || T.handsAbort,
+        win11: winBuild >= 22000,
+        pick: Hello.STUNT_PICK,
+        pos: Object.assign({ island: islandOn() }, knotFraction()),
+      });
+    } catch (e) { result = { outcome: 'skipped', why: e.message, typed: 0 }; }
+    T.handsRunning = false;
+    send('hands:state', { active: false, waiting: false });
+    if (!harness.active && !selection && !(agent && agent.active())) disarmEsc();
+  }
+  routeLog('hello: ' + result.outcome + (result.why ? ' (' + result.why + ')' : '') + ', ' + result.typed + ' characters');
+  if (tour !== T) return;
+  T.caps.helloTyped = result.typed > 0;
+  T.helloOutcome = result.outcome;
+  tourCardOut();
+}
+// "Not now" on the hello card: the hello ends, the tour stays owed (the dashboard still offers it).
+function tourLater() {
+  if (!tour) return;
+  tour = null;
+  send('tour:end', { reason: 'later' });
+  routeLog('tour later');
+  restoreKnotState();
+  tourNotifyHome();
+}
+// The voice module's state, kept on the tour's caps. Nothing is shown: the voice is not a step.
 function tourVoiceState(st) {
   if (!tour || !st) return;
-  const info = { installed: !!st.installed, downloading: st.downloading || null };
-  tour.caps.voice = Object.assign(tour.caps.voice || {}, info);
-  if (info.downloading) send('tour:update', Object.assign({ progress: Tour.progressOf(info) }, tour.step === Tour.STEP.voice ? { status: '' } : {}));
-  else send('tour:update', { progress: null });
-}
-// The download runs behind the rest of the tour. Once it is in, Fable is the
-// choice (the same write as the dashboard's switch), and the line waits until
-// the model has loaded, so "That is me now" is never said in the Windows voice.
-function tourVoiceGet() {
-  if (!tour) return;
-  send('tour:update', { status: 'Starting the download.', actions: Tour.continueActions(false), body: 'Fable, my own voice, is on its way. The Windows voice stands in until it lands, then I switch. Carry on, it keeps going.', title: 'This is my voice, for now' });
-  getVoice().install('fable').then(async () => {
-    applySettingsPatch({ voice: 'fable' });
-    await getVoice().warm();
-    if (!getVoice().status().ready) throw new Error('the voice did not load');
-    prerenderLines('install');
-    if (!tour) return;
-    send('tour:update', Object.assign({ progress: null, status: Tour.VOICE_LANDED_LINE }, tour.step === Tour.STEP.voice ? { title: 'This is my voice', body: 'This is Fable, my own voice. It runs on this PC and works offline.' } : {}));
-    tourSay(Tour.VOICE_LANDED_LINE);
-  }).catch((e) => { routeLog('tour: voice download: ' + e.message); if (tour) send('tour:update', { progress: null, status: Tour.VOICE_FAILED_LINE }); });
+  tour.caps.voice = Object.assign(tour.caps.voice || {}, { installed: !!st.installed, downloading: st.downloading || null });
 }
 function tourHeard(text, source) {
   const t = String(text || '').trim();
@@ -3944,9 +3986,11 @@ function tourAction(action, text) {
   if (action === 'tour-finish') { tourEnd('done'); return; }
   { const m = /^tour-try-([a-z_]+)$/.exec(action); if (m) { tourFirstWin(m[1]); return; } }
   if (action === 'tour-next') { tourNext(); return; }
-  if (action === 'tour-voice-get' && tour.step === S.voice) { tourVoiceGet(); return; }
+  if (action === 'tour-later' && tour.step === S.hello) { tourLater(); return; }
   if (action === 'tour-mic-heard' && tour.step === S.mic) { send('tour:update', { status: 'Loud and clear.', actions: Tour.continueActions(false) }); tourSay('Loud and clear.'); return; }
   if (action === 'tour-mic-retry' && tour.step === S.mic) { tourCardOut({ spoken: '' }); return; }
+  // No microphone that works: the talk key and the questions take typed answers instead.
+  if (action === 'tour-mic-none' && tour.step === S.mic) { tour.caps.whisper = false; routeLog('tour: going on with no microphone'); tourNext(); return; }
   if (action === 'tour-name' && tour.step === S.key) { tourHeard(text, 'typed'); return; }
   if (action === 'tour-answer' && tour.step === S.questions && /^q[123]$/.test(String(tour.hear))) { tourHeard(text, 'typed'); return; }
   if (action === 'tour-skip-questions' && tour.step === S.questions) { tour.hear = null; tourNext(); return; }
@@ -4279,21 +4323,26 @@ function routeUtteranceSlow(text, source, heardAt) {
     return;
   }
   // "Summarize this page", "read me the assignment": the window's words, read
-  // through UI Automation. When it gives no text, the screenshot path as before.
-  const pg = readsPage(kind.text);
+  // through UI Automation. "Explain this error", "what do you see here": the
+  // screenshot, answered in words (src/guide/screen-ask.js). Either way an
+  // answer, never a pointer (live 2026-11-11: "summarize the output here" was
+  // walked through clicks and told to type "summarize" into Claude's box).
+  const pg = screenAsk(kind.text) || readsPage(kind.text);
   if (pg) {
-    routeLog('-> page (' + pg.mode + '): "' + kind.text.slice(0, 80) + '"');
+    const by = source === 'typed' ? 'typed' : 'voice';
     sayAck('reading', source, heardAt);
+    if (pg.page === false) { routeLog('-> screen answer (' + pg.mode + '): "' + kind.text.slice(0, 80) + '"'); getGuide().start(kind.text, by, { askedAt: heardAt, answer: pg.mode }); return; }
+    routeLog('-> page (' + pg.mode + '): "' + kind.text.slice(0, 80) + '"');
     answerPage(pg, kind.text, source, heardAt)
       .catch((e) => { console.log('[page] ' + e.message); return false; })
-      .then((done) => { if (!done) { routeLog('page: no text from the window, reading the screen instead'); getGuide().start(kind.text, source === 'typed' ? 'typed' : 'voice', { askedAt: heardAt }); } });
+      .then((done) => { if (!done) { routeLog('page: no text from the window, answering from the screen instead'); getGuide().start(kind.text, by, { askedAt: heardAt, answer: pg.mode }); } });
     return;
   }
   routeAnswer(kind, text, source, heardAt);
 }
 
 // Asks routed by code ahead of the reflex layer and Hands.
-function ownPath(text) { return Boolean(rewriteAsk(text) || parseReminder(text) || readsPage(text) || parseRecallAsk(text)); }
+function ownPath(text) { return Boolean(rewriteAsk(text) || parseReminder(text) || readsPage(text) || screenAsk(text) || parseRecallAsk(text)); }
 
 // -------- reminders and timers (src/reminders.js) --------
 // Kept in companion/reminders.json, so a restart keeps them. When one is due
@@ -4383,6 +4432,8 @@ function routeAnswer(kind, text, source, heardAt) {
   // A follow-up to a guide that actually pointed stays with the guide; one to a
   // spoken answer, or to a guide that only explained, stays in words.
   const guideFollowUp = Boolean(guide && guide.recentlyEnded && guide.recentlyEnded() && guide.recent && guide.recent.steps && guide.recent.steps.length) && !(Date.now() - lastPlainAt < 180000);
+  // "Help", "can you help me", "um so like": ask back, no screen read, no model.
+  if (!guideFollowUp && vagueAsk(kind.text)) { routeLog('-> ask back: "' + kind.text.slice(0, 40) + '"'); sayShort(CLARIFY_LINE, source, heardAt, 'ask back'); return; }
   if (!needsScreen(kind.text) && !guideFollowUp) { routeLog('-> plain answer: "' + kind.text.slice(0, 80) + '"'); lastPlainAt = Date.now(); answerPlain(kind.text, source === 'typed' ? 'typed' : 'voice', heardAt); return; }
   routeLog('-> guide: "' + kind.text.slice(0, 80) + '"');
   sayAck('guide', source, heardAt);
@@ -5068,6 +5119,8 @@ function initCompanion(providedHooks = {}) {
     handsCheck: async () => { const a = getAgent(); const s = await handsRead(); return { agent: Boolean(a), probe: probeReady(), fg: s.fg ? { process: s.fg.process || '', title: String(s.fg.title || '').slice(0, 40), hwnd: Boolean(s.fg.hwnd) } : null, elements: s.elements.length, boxed: s.elements.filter((e) => e.box).length, capture: Boolean(s.cap), apps: handsAppList().length }; },
     show: forceShow,
     startTour: (from) => { forceShow(); tourStart(from || 'home'); return companionStatus(); },
+    // The first run only (main, after the sign-in): the Notepad hello, then its card. Once.
+    helloFirstRun: () => { const p = hooks.tourPrefs ? hooks.tourPrefs.get() : {}; if (p.hello_done || p.tour_done || tour) return false; tourStart('hello'); return true; },  // no forceShow: on Windows it activates the Knot's window, which would take the focus from Notepad (walk 2026-11-11)
     tourState: () => tourPublicState(),
     // The dashboard's home view: the task list, its buttons, Continue, the pill's word.
     tasksHome: dashboardTasks,
@@ -5173,5 +5226,9 @@ function worldItems() {
   } catch (_) { /* none */ }
   return out.sort((x, y) => y.weight - x.weight).slice(0, 10);
 }
+
+// The talk key for scripted walks only (NUS_WALK=1, never set by a release or the installer): a
+// walk presses and releases it from the main-process inspector, so it needs no real keyboard.
+if (process.env.NUS_WALK === '1') global.__nusWalk = { pttStart: () => pttStart(), pttStop: (reason) => pttStop(reason || 'walk') };
 
 module.exports = { initCompanion };

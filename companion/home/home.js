@@ -213,6 +213,7 @@
     $('#ptt-live').textContent=chord(status.ptt.accelerator);
     $('#ptt-input').placeholder=chord(status.ptt.accelerator);
     $('#open-mic').checked=!!s.openMic;
+    fillMics(s);
     $('#persist-transcripts-home').checked=s.persistTranscripts!==false;
     $('#save-audio-home').checked=!!s.saveAudio;
     $('#retention-days').value=s.audioRetentionDays||30;
@@ -375,6 +376,39 @@
       $('#feedback-message').value='';
       feedbackNote(r&&r.delivered?'Sent. Thank you. Pranav reads every note.':'Saved on this computer. It goes to Pranav as soon as Nūs can reach him.','ok');},e.submitter);};
   $('#ptt-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api.setPtt($('#ptt-input').value);if(!r.ok)throw new Error(r.error||'No talk key could be registered.');await settings();notice(r.fallback?'Requested key was unavailable. Live key: '+chord(r.accelerator):'Talk key updated.');},e.submitter);};
+  // Settings, Voice, Microphone (companion/renderer/mic-devices.js, the same list the Knot reads).
+  // Picking one saves it; the Knot's open mic moves to it. Test opens it for a few seconds and
+  // shows the level, so a silent one is plain before the first ask.
+  const NM=window.NusMic;let micSaved={micDeviceId:'',micDeviceLabel:''},micTest=null;
+  async function fillMics(s){
+    if(s)micSaved={micDeviceId:s.micDeviceId||'',micDeviceLabel:s.micDeviceLabel||''};
+    const sel=$('#mic-select');if(!sel||!NM)return;
+    let found={list:[],defaultLabel:''};try{found=NM.inputs(await navigator.mediaDevices.enumerateDevices());}catch(_){}
+    const pick=NM.choose(found,micSaved);
+    const rows=[{id:'',label:'Windows default'+(found.defaultLabel?' ('+found.defaultLabel+')':'')}].concat(found.list);
+    if(pick.why==='missing')rows.push({id:micSaved.micDeviceId,label:(micSaved.micDeviceLabel||'Your microphone')+' (not plugged in)'});
+    sel.innerHTML=rows.map(d=>'<option value="'+esc(d.id)+'">'+esc(d.label)+'</option>').join('');
+    sel.value=pick.why==='missing'?micSaved.micDeviceId:pick.id;
+    if(!micTest)$('#mic-note').textContent=!found.list.length?'No microphone found. Plug one in, or type to the Knot: click it and type.':pick.why==='missing'?'That one is not plugged in. The Windows default listens until it is back.':'The Knot listens with this one. Plug in a new one and it shows up here.';
+  }
+  if($('#mic-select'))$('#mic-select').onchange=e=>run(async()=>{
+    const opt=e.target.selectedOptions[0],id=e.target.value,label=id&&opt?opt.textContent.replace(/ \(not plugged in\)$/,''):'';
+    micSaved={micDeviceId:id,micDeviceLabel:label};await api.settingsSet(micSaved);notice('Saved. The Knot listens with '+(id?label:'the Windows default')+'.');
+    if(micTest)stopMicTest();
+  },e.target);
+  function stopMicTest(){if(!micTest)return;clearInterval(micTest.timer);clearTimeout(micTest.end);try{micTest.stream.getTracks().forEach(t=>t.stop());micTest.ctx.close();}catch(_){}micTest=null;$('#mic-meter').hidden=true;$('#mic-test').textContent='Test';}
+  if($('#mic-test'))$('#mic-test').onclick=async()=>{
+    if(micTest){stopMicTest();return;}
+    const sel=$('#mic-select'),id=sel.value,name=sel.selectedOptions[0]?sel.selectedOptions[0].textContent:'this microphone';
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia(NM.constraints(id)),ctx=new AudioContext(),an=ctx.createAnalyser();an.fftSize=1024;ctx.createMediaStreamSource(stream).connect(an);
+      const buf=new Float32Array(an.fftSize),bar=$('#mic-meter i');let peak=0,heard=0;const at=Date.now();
+      micTest={stream,ctx,timer:setInterval(()=>{an.getFloatTimeDomainData(buf);let sum=0;for(const v of buf)sum+=v*v;const rms=Math.sqrt(sum/buf.length);peak=Math.max(peak,rms);if(rms*7>.22)heard+=60;bar.style.width=Math.min(100,Math.round(rms*700))+'%';},60),end:null};
+      $('#mic-meter').hidden=false;$('#mic-test').textContent='Stop';$('#mic-note').textContent='Say something. The bar should move.';
+      micTest.end=setTimeout(()=>{const kind=heard>=500?'':NM.verdict(Date.now()-at,false,peak);stopMicTest();$('#mic-note').textContent=kind?NM.helpLine(kind,name,sel.options.length>2):'It hears you. '+name+' works.';fillMics();},6000);
+    }catch(err){$('#mic-note').textContent=NM.failLine(err&&err.name);}
+  };
+  if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener)navigator.mediaDevices.addEventListener('devicechange',()=>{setTimeout(()=>fillMics(),400);});
   $('#use-own-key').onchange=e=>run(async()=>{await api.publikChoice(e.target.checked?'own_key':'publik');await settings();notice(e.target.checked?'Saved. Your own key or Claude Code answers now.':'Saved. publik answers now.');},e.target);
   const fields={'open-mic':['openMic',e=>e.checked],'speak-replies-home':['speakReplies',e=>e.checked],'sounds':['sounds',e=>e.checked],'channel-messages':['channelMessages',e=>e.checked],'start-with-windows':['startWithWindows',e=>e.checked],'focus-guard':['focusGuard',e=>e.checked],'hands':['hands',e=>e.checked],'tasks':['tasks',e=>e.checked],'knot-island':['knotIsland',e=>e.checked],'focus-feeds':['focusGuardFeeds',e=>e.value.split(',').map(x=>x.trim()).filter(Boolean)],'hide-from-capture':['hideFromCapture',e=>e.checked],'persist-transcripts-home':['persistTranscripts',e=>e.checked],'save-audio-home':['saveAudio',e=>e.checked],'retention-days':['audioRetentionDays',e=>Number(e.value)],'knot-display':['knotDisplayId',e=>e.value?Number(e.value):null]};
   for(const [id,[key,value]] of Object.entries(fields))$('#'+id).onchange=e=>run(async()=>{await api.settingsSet({[key]:value(e.target)});notice('Saved.');},e.target);

@@ -124,7 +124,10 @@ function ruleAnswers(clause, { apps = [], sites = [] } = {}) {
 // the window behind (live 2026-11-03: it read OBS). "this", "here" and the
 // nouns still are.
 const SCREEN_WORDS = /\b(this|these|those|here|there|screen|window|page|tab|app|button|menu|icon|field|click|press|tap|open|close|select|find|where|see|look|show|point|highlight|which|error|message|popup|dialog|setting|settings|option|toolbar|sidebar|file|folder|document|doc|code|line|cell|row|column|chart|image|picture|photo|video|email|how do i|how can i|how to|walk me|help me|what am i|what's on|what is on)\b/i;
-const GENERAL_LEADS = /^\s*(?:(?:hey|ok|okay|so|um|uh|please|nus|no|yes|wait|actually|well|hmm+|and|but|also)[\s,]+)*(what('s| is| are| was| were)|who|when|why|define|tell me (a|about)|explain|how (many|much|far|long|old|does|do)|translate|convert|calculate|is|are|can|could|should|would|does|do)\b/i;
+// "Summarize the French Revolution" is a general question too (2026-11-11); a
+// summary of the screen ("summarize this") is caught before this by
+// src/guide/screen-ask.js and never reaches it.
+const GENERAL_LEADS = /^\s*(?:(?:hey|ok|okay|so|um|uh|please|nus|no|yes|wait|actually|well|hmm+|and|but|also|can you|could you)[\s,]+)*(what('s| is| are| was| were)|what [a-z]+ (?:did|does|do|is|are|was|were|will|would|can|should)|who|when|why|define|tell me (a|about)|explain|summari[sz]e|sum up|recap|describe|give me (?:a |the )?(?:summary|rundown|overview)|how (many|much|far|long|old|does|do)|translate|convert|calculate|is|are|can|could|should|would|does|do)\b/i;
 // "What's due this week", "when is Lab 3 due", "any deadlines tomorrow": the
 // desktop app's dates answer it (src/this-week.js), not the screen. Unless
 // the ask is about what is on the screen ("what's due on this page").
@@ -169,9 +172,14 @@ const MESSAGE_ASK = new RegExp('^\\s*' + TASK_LEAD + '(?:email|e-mail|mail|messa
 const THEN_ACT = new RegExp('(\\band\\b|\\bthen\\b|,|\\bafter that\\b)\\s+(also\\s+|please\\s+|then\\s+)?' + TASK_VERB + '\\b', 'i');
 const SEEK_THERE = /\b(find|search|look (up|for|through)|browse|shop|compare|check out|go through)\b.{0,80}?\b(here|on|at|from|in this|in my)\b/i;
 const HOWTO = /\b(how (do|can|would|should) (i|you|we)|how to|where (is|are|do i|can i|'s)|walk me|show me (where|how)|teach me|what (is|does) (this|that)|explain)\b/i;
+// "Summarize the French Revolution", "explain photosynthesis": words to say,
+// nothing to do on the screen. "Summarize my emails" (my) or "... and send it"
+// (a second action) is still a task.
+const KNOWLEDGE_ASK = new RegExp('^\\s*' + TASK_LEAD + '(?:summari[sz]e|sum up|recap|explain|describe)\\b', 'i');
 function isTask(text) {
   const t = String(text || '').trim();
   if (!t || HOWTO.test(t)) return false;
+  if (KNOWLEDGE_ASK.test(t) && !/\b(?:my|this|these|that|here|it)\b/i.test(t) && !THEN_ACT.test(t) && !SEEK_THERE.test(t) && !namesTarget(t)) return false;
   return TASK_RE.test(t) || THEN_ACT.test(t) || SEEK_THERE.test(t);
 }
 function messageAsk(text) { return MESSAGE_ASK.test(String(text || '')); }

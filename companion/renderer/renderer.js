@@ -742,11 +742,39 @@
     const tracks = micStream.getAudioTracks();
     return !tracks.length || tracks.every((t) => t.readyState === 'ended') || !audioCtx || audioCtx.state === 'closed';
   }
+  // Which microphone (companion/renderer/mic-devices.js): the one picked in Settings or on the
+  // tour's microphone card, else the Windows default. micOpenId is the device open now ('' the
+  // default, null when the mic is closed); micFoundList the devices last seen.
+  const NM = window.NusMic;
+  let micOpenId = null, micFoundList = null, micMissingSaid = '', micLastError = '';
+  async function micFound() {
+    try { return NM.inputs(await navigator.mediaDevices.enumerateDevices()); } catch (_) { return { list: [], defaultLabel: '' }; }
+  }
+  async function openMicStream() {
+    const found = await micFound();
+    micFoundList = found;
+    const want = NM.choose(found, settings || {});
+    // The chosen one is not plugged in: the Windows default stands in, said once per device.
+    if (want.why === 'missing' && micMissingSaid !== want.wanted) { micMissingSaid = want.wanted; showStatus((want.wanted || 'Your microphone') + ' is not plugged in. Using ' + (want.label || 'the Windows default') + '.'); }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(NM.constraints(want.id));
+      micOpenId = want.id;
+      return stream;
+    } catch (err) {
+      // A picked device that will not open: the Windows default instead, before giving up.
+      if (!want.id) throw err;
+      nus.log('mic: ' + (want.label || 'picked device') + ' did not open (' + (err && err.name) + '), trying the default');
+      const stream = await navigator.mediaDevices.getUserMedia(NM.constraints(''));
+      micOpenId = '';
+      return stream;
+    }
+  }
   async function startMic() {
     if (micDead()) { nus.log('mic: previous stream is dead, reopening'); stopMic(); }
     if (micStream) return;
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+      micLastError = '';
+      micStream = await openMicStream();
       micStream.getAudioTracks().forEach((t) => { t.onended = () => { nus.log('mic: track ended (' + (t.label || 'device') + ')'); if (!pttHeld) stopMic(); }; });
       // The chord was released before the mic came up: it stays warm for the
       // next press (the idle timer in ptt:state closes it), audio dropped.
@@ -775,7 +803,11 @@
       const label = micStream.getAudioTracks()[0]?.label || 'default device';
       nus.log('mic: capturing at ' + audioCtx.sampleRate + 'Hz via ' + label);
       setMicError('');
+      // Names show only once the mic may be used: read the list again now.
+      micFound().then((f) => { micFoundList = f; if (tourCard && tourCard.kind === 'mic') renderTourMics(); });
     } catch (err) {
+      micLastError = (err && err.name) || 'Error';
+      micOpenId = null;
       const message = (err && err.name === 'NotAllowedError')
         ? 'Microphone blocked. Allow it in Windows Settings > Privacy > Microphone, then click Listen again.'
         : (err && err.name === 'NotFoundError')
@@ -788,11 +820,43 @@
   }
 
   function stopMic() {
+    micOpenId = null;
     if (micProc) { micProc.port.onmessage = null; micProc.disconnect(); micProc = null; }
     if (micNode) { micNode.disconnect(); micNode = null; }
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
   }
+  // Open again on the device that should be open now, if the mic is open at all.
+  function reopenMic(why) {
+    if (!micStream) return;
+    nus.log('mic: reopening (' + why + ')');
+    stopMic(); startMic();
+  }
+  // A microphone plugged in or pulled out: follow it, and say so in plain words.
+  let micChangeTimer = null;
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => {
+    clearTimeout(micChangeTimer);
+    micChangeTimer = setTimeout(async () => {
+      const next = await micFound();
+      const r = NM.react(micFoundList, next, settings || {}, micStream ? micOpenId : null);
+      micFoundList = next;
+      if (r.added.length || r.removed.length) nus.log('mic: devices changed (+' + r.added.length + ' -' + r.removed.length + ')');
+      if (r.message) showStatus(r.message);
+      if (r.reopen) reopenMic('device change');
+      if (tourCard && tourCard.kind === 'mic') { renderTourMics(); if (!micStream && tourMic) setTourMicAgain(); }
+    }, 400);
+  });
+  // The pick changed (Settings, or the tour's card): the open mic moves to it.
+  let micPickSeen = null;
+  nus.on('settings:changed', (s) => {
+    const pick = (s && s.micDeviceId) || '';
+    if (micPickSeen === null) { micPickSeen = pick; return; }
+    if (pick === micPickSeen) return;
+    micPickSeen = pick; micMissingSaid = '';
+    if (settings) { settings.micDeviceId = pick; settings.micDeviceLabel = (s && s.micDeviceLabel) || ''; }
+    reopenMic('new pick');
+    if (tourCard && tourCard.kind === 'mic') renderTourMics();
+  });
 
   // ---- capture: system/meeting audio (getDisplayMedia loopback, in the app's own process) ----
   let sysStream = null, sysCtx = null, sysNode = null, sysProc = null;
@@ -1311,7 +1375,7 @@
   function renderTourMid(card) {
     trMid.innerHTML = ''; tourBars = null;
     const add = (tag, cls, text) => { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; trMid.appendChild(el); return el; };
-    if (card.kind === 'mic') { tourBars = add('canvas', 'tr-bars'); tourBars.width = 340; tourBars.height = 56; add('div', 'tr-note tr-device', 'Microphone: ' + (card.device || micLabel() || 'the Windows default')); }
+    if (card.kind === 'mic') { tourBars = add('canvas', 'tr-bars'); tourBars.width = 340; tourBars.height = 56; add('div', 'tr-note tr-device', 'Microphone: ' + (card.device || micLabel() || 'the Windows default')); add('div', 'tr-mics'); renderTourMics(); }
     if (card.keys && card.keys.length) { const k = add('div', 'tr-keys'); for (const key of card.keys) { const el = document.createElement('kbd'); el.textContent = key; k.appendChild(el); } }
     if (card.chip) add('div', 'tr-chip', card.chip);
     if (card.qa) { const list = add('div', 'tr-qa'); for (const row of card.qa) { const q = document.createElement('div'); q.className = 'tr-q' + (row.current ? ' on' : ''); q.textContent = row.q; list.appendChild(q); if (row.a) { const a = document.createElement('div'); a.className = 'tr-a'; a.textContent = 'You: ' + row.a; list.appendChild(a); } } }
@@ -1343,8 +1407,9 @@
   }
   function renderTourActions(actions) { trActions.innerHTML = ''; for (const a of actions || []) trActions.appendChild(tourButton(a)); }
   function renderTourHead(card) {
-    trKicker.textContent = 'Step ' + card.step + ' of ' + card.of;
-    trDots.innerHTML = ''; for (let i = 1; i <= card.of; i++) { const d = document.createElement('i'); if (i === card.step) d.className = 'on'; trDots.appendChild(d); }
+    // The hello card comes before the counted cards: no step, no dots.
+    trKicker.textContent = card.step >= 1 ? 'Step ' + card.step + ' of ' + card.of : '';
+    trDots.innerHTML = ''; if (card.step >= 1) for (let i = 1; i <= card.of; i++) { const d = document.createElement('i'); if (i === card.step) d.className = 'on'; trDots.appendChild(d); }
     renderTourProgress(card.progress);
   }
   // The voice download, a thin line under the dots while it runs.
@@ -1608,7 +1673,8 @@
   function setTourMic(on) {
     on = !!on;
     if (on === tourMic) return;
-    tourMic = on; tourHeardMs = 0; tourLevelAt = 0; tourHeardSent = false;
+    tourMic = on; tourHeardMs = 0; tourLevelAt = 0; tourHeardSent = false; tourPeak = 0; tourMicAt = Date.now(); tourHelpShown = '';
+    clearInterval(tourHelpTimer); tourHelpTimer = on ? setInterval(tourMicHelp, 1000) : null;
     if (on) {
       Promise.resolve(startMic()).then(() => {
         if (tourMic && !micStream) { tourMicFailed(); return; }
@@ -1620,11 +1686,51 @@
   }
   function tourMicFailed() {
     if (!tourMic || !tourCard || tourCard.kind !== 'mic') return;
-    trBody.textContent = 'I cannot find a microphone. Plug one in, or allow it in Windows Settings, Privacy, Microphone.';
-    renderTourActions([{ id: 'tour-mic-retry', label: 'Try again', primary: true }]);
+    trBody.textContent = NM.failLine(micLastError);
+    renderTourActions([{ id: 'tour-mic-retry', label: 'Try again', primary: true }, { id: 'tour-mic-none', label: 'Go on and type' }]);
+    renderTourMics();
+  }
+  // The devices on the microphone card, the one in use marked. Shown when there is a choice.
+  function renderTourMics() {
+    const host = trMid.querySelector('.tr-mics');
+    if (!host || !tourCard || tourCard.kind !== 'mic') return;
+    const found = micFoundList || { list: [], defaultLabel: '' };
+    host.innerHTML = '';
+    if (found.list.length < 2 && !(settings && settings.micDeviceId)) return;
+    const pick = NM.choose(found, settings || {});
+    const rows = [{ id: '', label: 'Windows default' + (found.defaultLabel ? ' (' + found.defaultLabel + ')' : '') }].concat(found.list);
+    for (const d of rows.slice(0, 6)) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'tr-mic' + (d.id === pick.id ? ' on' : ''); b.textContent = d.label;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation(); trMark('click');
+        const patch = { micDeviceId: d.id, micDeviceLabel: d.id ? d.label : '' };
+        if (settings) Object.assign(settings, patch);
+        micPickSeen = d.id;
+        tourHeardMs = 0; tourLevelAt = 0; tourHeardSent = false; tourPeak = 0; tourMicAt = Date.now(); tourHelpShown = '';
+        Promise.resolve(nus.settingsSet(patch)).catch(() => {});
+        if (micStream) reopenMic('picked on the tour'); else setTourMicAgain();
+        renderTourMics();
+        const el = trMid.querySelector('.tr-device'); if (el) el.textContent = 'Microphone: ' + (d.id ? d.label : (found.defaultLabel || 'the Windows default'));
+      });
+      host.appendChild(b);
+    }
+  }
+  function setTourMicAgain() { if (!tourMic) return; tourMic = false; setTourMic(true); }
+  // A while on the card and no voice: say why in plain words, once each kind.
+  let tourPeak = 0, tourMicAt = 0, tourHelpShown = '', tourHelpTimer = null;
+  function tourMicHelp() {
+    if (!tourMic || !tourCard || tourCard.kind !== 'mic' || !micStream) return;
+    const kind = NM.verdict(Date.now() - tourMicAt, tourHeardSent, tourPeak);
+    if (!kind || kind === tourHelpShown) return;
+    tourHelpShown = kind;
+    const others = ((micFoundList && micFoundList.list.length) || 0) > 1;
+    trStatus.textContent = NM.helpLine(kind, micLabel(), others);
+    if (kind === 'dead' || !others) renderTourActions([{ id: 'tour-next', label: 'Continue', primary: true, disabled: true }, { id: 'tour-mic-none', label: 'Go on and type' }]);
+    renderTourMics();
   }
   function tourLevel(level) {
     const v = Math.min(1, Math.max(0, (level || 0) * 7)), now = Date.now();
+    if ((level || 0) > tourPeak) tourPeak = level || 0;
     tourLevels.push(v); tourLevels.shift();
     // The bars move for anything; only the person counts, not the Knot's own line.
     if (speakingNow) { tourHeardMs = 0; tourLevelAt = 0; return; }

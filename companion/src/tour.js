@@ -14,8 +14,13 @@
 
 // The 0.1.15 order. The capabilities-first order waits for the reworked tour
 // in a later release (its card 5 could not be passed with Claude Code signed out).
-const STEP = { voice: 1, mic: 2, key: 3, questions: 4, home: 5, sharing: 6, ai: 7, guide: 8, hands: 9, dashboard: 10, done: 11 };
-const OF = 11;
+// hello (0) comes before the counted cards, on a first run only: the Knot has just typed into
+// Notepad (companion/src/hello.js) and asks whether to show more. Show me starts card 1.
+// No voice card (Pranav, 2026-11-11: "can we automatically equip the Fable voice? my friend agrees
+// the added step of the voice creates more friction"). Fable downloads by itself right after sign-in
+// (companion/index.js, voiceAutoEquip) and the Knot speaks with it from the next sentence on.
+const STEP = { hello: 0, mic: 1, key: 2, questions: 3, home: 4, sharing: 5, ai: 6, guide: 7, hands: 8, dashboard: 9, done: 10 };
+const OF = 10;
 const { geminiKeyShape } = require('./get-started');
 const QUESTIONS = [
   { q: 'What are you working on these days?', ack: 'Got it.', note: 'working on' },
@@ -57,6 +62,10 @@ function guideChip(front) {
   return GUIDE_CHIP_ANY;
 }
 const HANDS_CARD = { title: 'Open Notepad and type a list?', hint: 'It runs on this PC with no AI model. Nothing is sent anywhere.' };
+// The hello card (Pranav, 2026-11-11). typed: the Notepad note landed, at least in part.
+const HELLO_LINE = "Hey, I'm Nūs. That was me. Wanna see what else I can do?";
+const HELLO_UNTYPED_LINE = "Hey, I'm Nūs. I live on your screen. Wanna see what I can do?";
+const HELLO_ACTIONS = [{ id: 'tour-next', label: 'Show me', primary: true }, { id: 'tour-later', label: 'Not now' }];
 const HANDS_DONE_LINE = 'That was me on your mouse. Ask me to do something in any app and I will.';
 // The action could not see the words land: the card says so, never "that was me".
 const HANDS_UNSURE_LINE = 'I typed that, but I could not see it land. Have a look at Notepad.';
@@ -142,13 +151,13 @@ function progressOf(voice) {
 // source, cli, keyReady, hands, english, ptt, device, island, hideFromCapture,
 // captureForcedOff, voice: { installed, downloading }, desktopApp }, qa }.
 function card(step, info = {}) {
-  const caps = info.caps || {}, name = String(info.name || '').trim(), voice = caps.voice || {};
-  const base = { step, of: OF, skip: step < OF, note: '', progress: progressOf(voice) };
-  if (step === STEP.voice) {
-    if (voice.installed) return Object.assign(base, { kind: 'voice', title: 'This is my voice', body: 'This is Fable, my own voice. It runs on this PC and works offline.', spoken: 'Hi. This is my voice. It runs right here on your computer.', status: '', actions: continueActions(false) });
-    if (voice.downloading) return Object.assign(base, { kind: 'voice', title: 'This is my voice, for now', body: 'Fable, my own voice, is on its way. The Windows voice stands in until it lands, then I switch.', spoken: 'My own voice is on its way. The Windows voice stands in until then.', status: '', actions: continueActions(false) });
-    return Object.assign(base, { kind: 'voice', title: 'This is my voice, for now', body: 'That was the Windows voice standing in. Mine is called Fable: a ' + VOICE_MB + ' MB download that runs on this PC and never goes online after. It keeps downloading while we go on.', spoken: 'Hi. The Windows voice is standing in for me. Want my own? It is one download.',
-      note: 'You can get it later on the dashboard, under Settings, Voice.', status: '', actions: [{ id: 'tour-voice-get', label: 'Download Fable', primary: true }, { id: 'tour-next', label: 'Later' }] });
+  const caps = info.caps || {}, name = String(info.name || '').trim();
+  // No progress line for the voice download on the cards: it is not the person's business on a first run.
+  const base = { step, of: OF, skip: step < OF, note: '', progress: null };
+  if (step === STEP.hello) {
+    const typed = caps.helloTyped !== false;
+    return Object.assign(base, { kind: 'hello', skip: false, title: "Hey, I'm Nūs.", body: typed ? 'That was me. Wanna see what else I can do?' : 'I live on your screen. Wanna see what I can do?',
+      spoken: typed ? HELLO_LINE : HELLO_UNTYPED_LINE, status: '', actions: HELLO_ACTIONS.slice() });
   }
   if (step === STEP.mic) return Object.assign(base, { kind: 'mic', title: 'Now, can I hear you?', body: 'Say anything out loud. If the bars move, your mic works.', spoken: 'Now, can I hear you? Say anything.', note: caps.english === false ? NOT_ENGLISH_LINE : '', device: caps.device || '', status: '', actions: continueActions(true) });
   if (step === STEP.key) {
@@ -202,7 +211,7 @@ function spokenLines(caps) {
   for (let s = 1; s <= OF; s++) out.push(card(s, { caps, name: 'Maya' }).spoken);
   out.push('Loud and clear.', 'Hi, Maya. That key works anywhere.');
   for (const q of QUESTIONS) out.push(q.q, q.ack);
-  out.push('Thank you.', HOME_CHANGED_LINE, GUIDE_DEMO_LINE, HANDS_DONE_LINE, HANDS_UNSURE_LINE, 'Another time.', VOICE_LANDED_LINE, KEY_OK_LINE, DASHBOARD_DONE_LINE);
+  out.push('Thank you.', HOME_CHANGED_LINE, GUIDE_DEMO_LINE, HANDS_DONE_LINE, HANDS_UNSURE_LINE, 'Another time.', KEY_OK_LINE, DASHBOARD_DONE_LINE);
   for (const s of DASHBOARD_STOPS) out.push(s.line);
   return out;
 }
@@ -210,10 +219,10 @@ function spokenLines(caps) {
 function cachedLines() {
   const caps = { whisper: true, source: true, cli: false, keyReady: false, hands: true, english: true, voice: { installed: true } };
   const lines = new Set(spokenLines(caps).filter((l) => !/Maya/.test(l)));
-  for (const c of [{ installed: false }, { downloading: { got: 1, total: 2 } }]) lines.add(card(STEP.voice, { caps: Object.assign({}, caps, { voice: c }) }).spoken);
+  lines.add(HELLO_LINE); lines.add(HELLO_UNTYPED_LINE);
   for (const extra of [{ source: false }, { cli: true }, { keyReady: true }, { publik: true }, { hands: false }, { whisper: false }]) for (let s = 1; s <= OF; s++) lines.add(card(s, { caps: Object.assign({}, caps, extra) }).spoken);
   return [...lines].filter(Boolean);
 }
 
-module.exports = { STEP, OF, QUESTIONS, HANDS_LINES, TRY_CHIPS, FIRST_WINS, firstWins, GUIDE_DEMO_LINE, guideChip, HANDS_CARD, HANDS_DONE_LINE, HANDS_UNSURE_LINE, NOT_ENGLISH_LINE, VOICE_MB, VOICE_LANDED_LINE, VOICE_FAILED_LINE, DASHBOARD_STOPS, DASHBOARD_DONE_LINE, DASHBOARD_TUCK, DASHBOARD_FAILED_LINE, HOME_CHANGED_LINE, KEY_OK_LINE, KEY_BAD_LINE, KEY_FAILED_LINE,
+module.exports = { HELLO_LINE, HELLO_UNTYPED_LINE, HELLO_ACTIONS, STEP, OF, QUESTIONS, HANDS_LINES, TRY_CHIPS, FIRST_WINS, firstWins, GUIDE_DEMO_LINE, guideChip, HANDS_CARD, HANDS_DONE_LINE, HANDS_UNSURE_LINE, NOT_ENGLISH_LINE, VOICE_MB, VOICE_LANDED_LINE, VOICE_FAILED_LINE, DASHBOARD_STOPS, DASHBOARD_DONE_LINE, DASHBOARD_TUCK, DASHBOARD_FAILED_LINE, HOME_CHANGED_LINE, KEY_OK_LINE, KEY_BAD_LINE, KEY_FAILED_LINE,
   shouldShow, onFirstWindow, englishLocale, nameFrom, keyCheck, keycaps, continueActions, qaRows, homeChoices, sharingToggle, progressOf, card, tuckLine, spokenLines, cachedLines };

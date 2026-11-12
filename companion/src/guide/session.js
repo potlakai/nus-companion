@@ -40,6 +40,8 @@ const { chooseElement } = require('./chooser');
 const { sensitiveTarget, REFUSAL } = require('./sensitive');
 const { regionFor } = require('./region');
 const { plainAskError } = require('../ask-error');
+const { buildScreenAnswer, answerMs } = require('./screen-answer');
+const { answerish, handsAskBack, noClickLine } = require('./screen-ask');
 
 const MAX_STEPS = 12;
 const MODEL_TIMEOUT_MS = 75000;   // Claude Code cold start + an image read can take a while
@@ -117,7 +119,10 @@ class GuideSession {
     if (this.active()) { this.d.log('busy, ignoring ask'); this.d.send('status', { message: 'Still on the last one. Esc winds it back.' }); return false; }
     const gen = ++this.gen;
     const now = this.d.now();
-    this.session = { id: 'g' + now.toString(36), task, source: source || 'typed', startedAt: now, askedAt: (opts && opts.askedAt) || now, clickAt: null, app: null, steps: [], target: null, hashes: null, unchanged: 0, replay: null, epoch: 0, seq: 0, prevTarget: null, plan: null, T: null };
+    // opts.answer: a question about the screen (src/guide/screen-ask.js mode),
+    // answered in words from one screenshot. No pointer, no steps.
+    const answer = opts && opts.answer ? (opts.answer === true ? 'ask' : String(opts.answer)) : null;
+    this.session = { id: 'g' + now.toString(36), task, source: source || 'typed', startedAt: now, askedAt: (opts && opts.askedAt) || now, clickAt: null, app: null, steps: [], target: null, hashes: null, unchanged: 0, replay: null, epoch: 0, seq: 0, prevTarget: null, plan: null, T: null, answer };
     this.d.log('start: ' + task);
     await this.begin(gen);
     return true;
@@ -138,6 +143,7 @@ class GuideSession {
     if (gen !== this.gen) return;
     s.app = fg ? { title: fg.title || '', process: fg.process || '', hwnd: fg.hwnd } : null;
     s.frame = fg && fg.rect && fg.rect.w > 0 ? fg.rect : null;
+    if (s.answer) { await this.answerScreen(gen, { fg, snap }); return; }
     const wt = fg && this.d.walkthroughs ? this.d.walkthroughs.find({ process: fg.process, title: fg.title, task: s.task }) : null;
     if (wt && wt.steps && wt.steps.length) {
       s.replay = { key: wt.key, steps: wt.steps, index: 0 };
@@ -411,8 +417,14 @@ class GuideSession {
     // when the whole reply lands (the ledger showed it equal to model_done).
     const rs = new ReplyStream();
     let said = 0;
+    // An ask that reads like a question waits for the whole reply: it may end
+    // in an answer instead of a step, and "Nothing to click here" must not be
+    // heard first. A step that hands the ask back ("Type 'summarize' in the
+    // box") or says there is nothing to click is never spoken (2026-11-11).
+    const holdSpeech = answerish(s.task);
     const speak = (ev) => {
-      if (ev.type !== 'speech') return;
+      if (ev.type !== 'speech' || holdSpeech || rs.muted) return;
+      if (handsAskBack(ev.text, s.task) || noClickLine(ev.text)) { rs.muted = true; return; }
       if (said === 0 && T.firstSpeech == null) T.firstSpeech = now() - t0;
       this.sayEarly(ev.text, said++ === 0, epoch);
     };
@@ -460,7 +472,63 @@ class GuideSession {
       return;
     }
     if (prov) this.retract();
+    // Nothing to click for what was really a question: answer it from the same screenshot.
+    if (outcome.kind === 'answer') { this.d.log('pointing gave way to an answer (' + outcome.why + ')'); await this.answerScreen(gen, { fg, cap, why: outcome.why }); return; }
     if (outcome.kind === 'finish') this.finish(outcome.text); else this.explain(outcome.text, { fail: outcome.why === 'fail' });
+  }
+
+  // One screenshot, one question, answered in words (src/guide/screen-answer.js).
+  // have: { fg, cap } already read, or { fg, snap } from the early read.
+  async answerScreen(gen, have = {}) {
+    const s = this.session;
+    if (!s || gen !== this.gen) return;
+    this.setState('reading');
+    const epoch = ++s.epoch;
+    s.prevTarget = null;
+    s.target = null;
+    const T = s.T = this.newTiming('answer');
+    const now = () => this.d.now();
+    let fg = have.fg, cap = have.cap || null;
+    if (!cap && have.snap && have.snap.cap) {
+      cap = have.snap.cap; fg = have.snap.fg;
+      T.prefetch = 'hit(' + have.snap.age + 'ms)';
+      if (have.snap.capMs != null) { T.cap = have.snap.capMs; T.fg = have.snap.fgMs; }
+    }
+    if (!cap) {
+      if (fg === undefined) { const tf = now(); fg = await this.foreground(); T.fg = now() - tf; if (gen !== this.gen) return; }
+      const tc = now();
+      cap = await Promise.resolve().then(() => this.d.capture()).then((c) => { T.cap = now() - tc; return c; }, (e) => { this.d.log('capture failed: ' + e.message); return null; });
+    }
+    if (gen !== this.gen) return;
+    if (fg) s.app = { title: fg.title || '', process: fg.process || '', hwnd: fg.hwnd };
+    if (!cap || !cap.dataUrl) { this.explain('I could not read the screen. On Windows, allow screen capture for Nūs and try again.'); return; }
+    const llm = this.d.llm();
+    if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot answer. Open Settings to sign in or add a key.', { fail: true }); return; }
+    T.provider = llm.provider || '';
+    const req = buildScreenAnswer({ ask: s.task, mode: s.answer || 'ask', window: s.app || {} });
+    this.d.log('answer from the screen (' + (s.answer || 'ask') + (have.why ? ', pointer: ' + have.why : '') + ')');
+    const rs = new ReplyStream();
+    let said = 0;
+    const t0 = now();
+    const speak = (ev) => {
+      if (ev.type !== 'speech' || gen !== this.gen || s.epoch !== epoch) return;
+      if (said === 0 && T.firstSpeech == null) T.firstSpeech = now() - t0;
+      this.sayEarly(ev.text, said++ === 0, epoch);
+    };
+    let raw = null, err = null, streamed = false;
+    this.modelsInFlight += 1;
+    try {
+      raw = await withTimeout(llm.complete({ system: req.system, turns: [{ role: 'user', text: req.text }], imageDataUrl: cap.dataUrl, json: false, maxTokens: req.maxTokens, onDelta: (piece) => { streamed = true; for (const ev of rs.feed(piece)) speak(ev); } }), MODEL_TIMEOUT_MS, 'model');
+    } catch (e) { err = e; } finally { this.modelsInFlight -= 1; }
+    if (gen !== this.gen || s.epoch !== epoch) return;
+    T.model = now() - t0;
+    if (err) { this.d.log('answer failed: ' + err.message); this.explain(plainAskError(T.provider, err), { fail: true }); return; }
+    // A brain that does not stream hands the whole reply back at the end.
+    if (!streamed && raw) rs.feed(String(raw));
+    for (const ev of rs.end()) speak(ev);
+    if (said > 0) s.saidStep = epoch;
+    const text = rs.spoken.join(' ').trim();
+    this.explain(text || 'I did not get an answer back. Try asking again.', { ms: answerMs(text), kicker: 'answer', end: 'answer' });
   }
 
   // The model's raw reply -> what to do. { kind:'point', target, reply, plan } |
@@ -477,6 +545,14 @@ class GuideSession {
     const parsed = parsePointReply(m.raw);
     const v = validatePoint(parsed, elements, { verified: !!probe, image: cap && { width: cap.width, height: cap.height } });
     this.d.log(`model ${modelMs}ms: ${v.ok ? 'ok' : 'rejected'} (${v.reason})` + (parsed && parsed.target ? ' target=' + JSON.stringify(parsed.target) : ''));
+    // A question, not a task: the model said so ([ANSWER]), or found nothing to
+    // click for it, or the step it wrote hands the ask back to the person
+    // ("Type 'summarize for me' in the box", live 2026-11-11). Answer instead.
+    const question = s && answerish(s.task);
+    if (v.reply && v.reply.answer) return { kind: 'answer', why: 'model said answer' };
+    if (v.reply && handsAskBack(v.reply.instruction, s ? s.task : '')) return { kind: 'answer', why: 'step handed the ask back' };
+    if (question && (!v.ok || !v.reply)) return { kind: 'answer', why: 'no valid step' };
+    if (question && v.reply && !v.reply.target && (!v.reply.done || noClickLine(v.reply.instruction))) return { kind: 'answer', why: 'nothing to click' };
     if (!v.ok || !v.reply) return { kind: 'explain', why: 'invalid', text: 'I could not work out the next step from this screen. Tell me a little more, or open the app first.' };
     const reply = v.reply;
     if (reply.done) return { kind: 'finish', text: reply.instruction, reply };
@@ -726,12 +802,13 @@ class GuideSession {
   explain(text, opts = {}) {
     const s = this.session;
     this.stopWatch();
-    this.logTiming('explain');
+    this.logTiming(opts.end || 'explain');
     this.setState('explaining');
     const actions = opts.fail ? [{ id: 'settings', label: 'Open Settings', primary: true }, { id: 'dismiss', label: 'OK' }] : [{ id: 'dismiss', label: 'OK' }];
-    this.d.send('guide:bubble', { text, anchor: 'knot', task: 'ask', kind: opts.fail ? 'error' : '', kicker: opts.fail ? 'could not answer' : '', actions, sessionId: s ? s.id : null, speak: s && s.source === 'voice' && !this.saidThisStep() ? text : undefined });
+    this.d.send('guide:bubble', { text, anchor: 'knot', task: 'ask', kind: opts.fail ? 'error' : '', kicker: opts.fail ? 'could not answer' : (opts.kicker || ''), actions, sessionId: s ? s.id : null, speak: s && s.source === 'voice' && !this.saidThisStep() ? text : undefined });
     this.clearExplain();
-    this.explainTimer = setTimeout(() => { if (this.state === 'explaining') this.dismiss('explain-timeout'); }, EXPLAIN_MS);
+    // An answer stays up long enough to read (opts.ms); a step's note does not.
+    this.explainTimer = setTimeout(() => { if (this.state === 'explaining') this.dismiss('explain-timeout'); }, opts.ms || EXPLAIN_MS);
     if (this.explainTimer.unref) this.explainTimer.unref();
   }
 

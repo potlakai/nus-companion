@@ -7,6 +7,9 @@
 #   {"id":1,"op":"ping"}
 #   {"id":2,"op":"keys.chord","keys":[17,84]}          press in order, release in reverse (Ctrl+T)
 #   {"id":3,"op":"keys.text","text":"hello","enter":false}
+#   {"id":4,"op":"keys.slow","hwnd":123,"text":"Hi","delayMs":55,"requireEmpty":true}
+#        typed live, one character at a time, ONLY while window 123 is in front and the person is
+#        not pressing a key or a mouse button; it stops at once otherwise (the first-run hello).
 #
 # keys.text refuses to type into a password field, and mouse.click refuses to
 # click into one. Since Hands (0.1.5) the mouse ops exist too: mouse.click,
@@ -38,6 +41,24 @@ public static class NusHands {
     keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
     SetForegroundWindow(h);
     return GetForegroundWindow() == h;
+  }
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  // A key or a mouse button held down by the person right now. Enter is left out (the live typing
+  // sends it and lets go before the next look) and so is VK_PACKET (the typed characters).
+  public static bool PersonActive() {
+    int[] mouse = { 0x01, 0x02, 0x04, 0x05, 0x06 };
+    foreach (int b in mouse) if ((GetAsyncKeyState(b) & 0x8000) != 0) return true;
+    for (int vk = 0x08; vk <= 0xFE; vk++) {
+      if (vk == 0x0D || vk == 0xE7) continue;
+      if ((GetAsyncKeyState(vk) & 0x8000) != 0) return true;
+    }
+    return false;
+  }
+  // One character as real key events: Enter for a line break, else a Unicode key.
+  public static void OneChar(char c) {
+    if (c == '\r') return;
+    if (c == '\n') Send(Key(0x0D, 0, 0), Key(0x0D, 0, KEYUP));
+    else Send(Key(0, c, UNICODE), Key(0, c, UNICODE | KEYUP));
   }
   public static void Chord(int[] vks) {
     foreach (int v in vks) keybd_event((byte)v, 0, 0, UIntPtr.Zero);
@@ -224,7 +245,9 @@ function Handle($req) {
         $p = $_.ProcessName.ToLowerInvariant() -replace '[^a-z0-9]', ''
         $t = ([string]$_.MainWindowTitle).ToLowerInvariant() -replace '[^a-z0-9]', ''
         ($p.Length -ge 3 -and ($want.Contains($p) -or $p.Contains($want))) -or $t.EndsWith($want)
-      } | Select-Object -First 1
+      } | Sort-Object { [string]::IsNullOrEmpty([string]$_.MainWindowTitle) } | Select-Object -First 1
+      # A window with a title first: Windows 11 runs extra Notepad processes whose main window is
+      # hidden, and activating one of those brought nothing forward (walk 2026-11-11).
       if (-not $hit) { return @{ ok=$false; found=$false } }
       $front = [NusHands]::Activate([IntPtr]$hit.MainWindowHandle)
       return @{ ok=[bool]$front; found=$true; process=$hit.ProcessName; hwnd=[int64]$hit.MainWindowHandle }
@@ -355,6 +378,37 @@ function Handle($req) {
       # plainly does not hold them is not submitted empty.
       if ($req.enter -and $verified -ne $false) { Start-Sleep -Milliseconds 80; [NusHands]::Chord([int[]]@(0x0D)) }
       return @{ ok=$true; chars=$t.Length; how=$how; verified=$verified; submitted=[bool]($req.enter -and $verified -ne $false); window=$where.window; focus=$where.focus; focusType=$where.focusType; refocused=$where.refocused }
+    }
+    'keys.slow' {
+      # The first-run hello (companion/src/hello.js): words typed live into the one window the
+      # Companion opened itself. It never brings a window forward: if that window is not in front,
+      # if it is gone, or if the person presses a key or a mouse button, it stops at once and says
+      # how far it got. requireEmpty: nothing is typed unless the document is empty (a restored
+      # Notepad tab holds the person's own text).
+      $h = [IntPtr][int64]$req.hwnd
+      if (-not $req.hwnd -or -not [NusHands]::IsWindow($h)) { return @{ ok=$false; stopped='gone'; typed=0 } }
+      if ([NusHands]::GetForegroundWindow() -ne $h) { return @{ ok=$false; stopped='focus'; typed=0 } }
+      try { $f = $AE::FocusedElement; if ($f -and [bool]$f.Current.IsPassword) { return @{ ok=$false; refused='password'; typed=0 } } } catch {}
+      $empty = $null
+      if ($req.requireEmpty) {
+        $v = Read-FocusedText
+        if ($null -ne $v) { $empty = ((Squash $v).Length -eq 0) }
+        if ($empty -eq $false) { return @{ ok=$false; stopped='not_empty'; typed=0; empty=$false } }
+      }
+      $t = [string]$req.text
+      if ($t.Length -gt 400) { $t = $t.Substring(0, 400) }
+      $delay = 55
+      if ($req.delayMs) { $delay = [math]::Max(15, [math]::Min(200, [int]$req.delayMs)) }
+      $n = 0
+      foreach ($c in $t.ToCharArray()) {
+        if (-not [NusHands]::IsWindow($h)) { return @{ ok=$false; stopped='gone'; typed=$n; empty=$empty } }
+        if ([NusHands]::GetForegroundWindow() -ne $h) { return @{ ok=$false; stopped='focus'; typed=$n; empty=$empty } }
+        if ([NusHands]::PersonActive()) { return @{ ok=$false; stopped='person'; typed=$n; empty=$empty } }
+        [NusHands]::OneChar($c)
+        $n++
+        Start-Sleep -Milliseconds $delay
+      }
+      return @{ ok=$true; typed=$n; empty=$empty; window=[NusHands]::Title($h) }
     }
     'keys.copy' {
       # "Make this friendlier" in an app whose selection UI Automation cannot

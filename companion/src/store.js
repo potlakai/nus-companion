@@ -107,6 +107,10 @@ const DEFAULTS = {
   knotPos: {},
   // Which display the overlay covers (Electron display id); null = primary.
   knotDisplayId: null,
+  // Which microphone to listen with (companion/renderer/mic-devices.js). Empty: the Windows
+  // default. The name is kept too, so the choice survives Windows giving the device a new id.
+  micDeviceId: '',
+  micDeviceLabel: '',
   // Date (YYYY-MM-DD) the proactive daily line was last shown, so it fires
   // once per day and never nags.
   lastDailyLine: '',

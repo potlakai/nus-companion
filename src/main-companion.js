@@ -23,6 +23,9 @@ app.setName('Nus Companion');
 const dir = dataDirFromArgv();
 app.setPath('userData', dir ? path.resolve(dir) : path.join(app.getPath('appData'), 'Nus Companion'));
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+// The lag recorder (companion/src/lag): off in a normal install; on in a dev run, with NUS_LAG=1, or
+// with a lag-on.txt in the profile. It wraps IPC and timers, so it goes in before anything registers.
+require('../companion/src/lag').install({ version: app.isPackaged ? app.getVersion() : 'dev' });
 let home = null, companion = null, folders = null, databaseReady = false;
 app.on('second-instance', () => { if (app.isReady()) { openHome(); try { stats.engaged(); } catch (_) { /* stats may not exist yet */ } } });
 const crashHandlers = require('./crash').installCrashHandlers(app, dialog);
@@ -275,6 +278,8 @@ function settingsPatch(patch) {
   if (Array.isArray(patch.focusGuardFeeds) || typeof patch.focusGuardFeeds === 'string') clean.focusGuardFeeds = normalizeFeeds(patch.focusGuardFeeds);
   // The Knot's voice: the system one, or a named local voice (companion/src/voice).
   if (patch.voice === 'system' || patch.voice === 'fable') clean.voice = patch.voice;
+  // The microphone (Settings, Voice): a device id and its name, '' for the Windows default.
+  for (const key of ['micDeviceId', 'micDeviceLabel']) if (typeof patch[key] === 'string' && patch[key].length <= 512) clean[key] = patch[key];
   if (patch.apiKeys && typeof patch.apiKeys === 'object') {
     clean.apiKeys = {};
     for (const key of ['typesafe','gemini','anthropic','openai','nvidia']) if (typeof patch.apiKeys[key] === 'string' && patch.apiKeys[key].length <= 4096) clean.apiKeys[key] = patch.apiKeys[key].trim();
@@ -534,6 +539,17 @@ app.whenReady().then(async () => {
   // through the gate is still an install. Never awaited: a slow or missing network must not hold
   // anything up. --autostart is the argument Windows passes when it starts Nus at sign-in.
   if (!SMOKE) stats.boot({ via: process.argv.includes('--autostart') ? 'login' : 'manual' });
+  // Fable comes with Nūs (resources/voice). Its engine loads now, while the person is on the sign-in
+  // window, so the Knot's first word is already Fable. One instance, handed to the companion.
+  if (!SMOKE) {
+    try {
+      const { createVoice } = require('../companion/src/voice');
+      global.__nusVoice = createVoice({ userData, settings: { get: () => store.getSettings() }, log: (m) => console.log('[voice]', m) });
+      const st = global.__nusVoice.status();
+      console.log('[voice] at start: ' + st.voice + (st.installed ? ', on disk at ' + global.__nusVoice.modelDir() : ', not on disk'));
+      if (st.installed && st.voice !== 'system') { const t0 = Date.now(); global.__nusVoice.warm().then(() => console.log('[voice] Fable loaded ' + (Date.now() - t0) + ' ms after start, ready ' + global.__nusVoice.status().ready)); }
+    } catch (e) { console.log('[voice] at start: ' + e.message); }
+  }
   if (publik) {
     // The gate window tells the stats which screen is up and which button was pressed (counts
     // only, nothing from publik). Closing it quits; will-quit then sends signin_closed.
@@ -646,7 +662,11 @@ app.whenReady().then(async () => {
   // done or skipped.
   // Started by Windows at sign-in: quietly, just the Knot, unless the tour is still owed.
   const atLogin = process.argv.includes('--autostart');
+  const firstRun = !atLogin && !api.getPreferences().home_seen;
   if ((!atLogin && !api.getPreferences().home_seen) || tourMod.shouldShow(api.getPreferences()) || SMOKE) openHome();
+  // The first run: the Knot types its hello into Notepad, then asks to show more (companion/src/hello.js).
+  // NUS_HELLO=0 turns it off for scripted checks and benches that start a fresh profile.
+  if (firstRun && !SMOKE && process.env.NUS_HELLO !== '0') setTimeout(() => { try { companion.helloFirstRun(); } catch (e) { console.log('[hello] ' + e.message); } }, 4000);
   // A chosen start-with-Windows is written again at each start, so it stays as
   // set and follows the exe if an update moved it (Clicky 1.0.50 had to fix exactly this).
   if (!SMOKE && typeof store.getSettings().startWithWindows === 'boolean') applyAutostart(store.getSettings().startWithWindows);

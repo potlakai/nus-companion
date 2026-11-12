@@ -303,6 +303,35 @@ test('"stop" and "I got it from here" cut the Knot off', () => {
   assert.match(ui, /if \(pttHeld\) \{ stopSpeaking\(\); startMic\(\); \}/);
 });
 
+// Start-up lag (2026-11-11): asking which lines are missing read every line's audio on the main
+// thread, 150 to 730 ms at a time. The question is answered from each file's header now.
+test('which lines are missing is answered without reading their audio', async () => {
+  const dir = tmp();
+  const made = createLineCache({ dir, voiceKey: () => 'k', synth: async () => tone() });
+  await made.prerender();
+  const fsMod = require('node:fs');
+  const cold = createLineCache({ dir, voiceKey: () => 'k', synth: async () => { throw new Error('must not synthesize'); } });
+  const real = fsMod.readFileSync;
+  let reads = 0;
+  fsMod.readFileSync = function (...args) { reads++; return real.apply(this, args); };
+  try {
+    assert.deepEqual(cold.missing(), [], 'every line is there');
+    assert.equal(reads, 0, 'and no audio file was read to find that out');
+    assert.equal(cold.has(LINES[0]), true);
+    assert.equal(cold.has('A line nobody made.'), false);
+  } finally { fsMod.readFileSync = real; }
+  // A file cut short (a crash mid-save leaves it empty or tiny) counts as missing, so it is made again.
+  fsMod.writeFileSync(cold.file(LINES[0]), '');
+  fsMod.writeFileSync(cold.file(LINES[1]), 'RIFF');
+  const fresh = createLineCache({ dir, voiceKey: () => 'k', synth: async () => tone() });
+  assert.deepEqual(fresh.missing(), [LINES[0], LINES[1]]);
+  // Anything else wrong with a file shows when the line is said: no audio comes back, so it is made live.
+  fsMod.writeFileSync(fresh.file(LINES[3]), Buffer.alloc(200, 1));
+  assert.equal(fresh.get(LINES[3]), null);
+  // Saying a line still reads its audio.
+  assert.ok(fresh.get(LINES[2]).pcm.length > 0);
+});
+
 test('a reply cut off says no more of its lines; the next reply speaks', () => {
   const body = main.slice(main.indexOf('let speakMuteUntil ='), main.indexOf('// What the Companion knows'));
   const sent = [];

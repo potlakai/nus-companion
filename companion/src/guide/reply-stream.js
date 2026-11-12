@@ -19,7 +19,7 @@
 const SENTENCE_END = /[.!?…]+["'”’)\]]*\s+/;
 const MIN_CHUNK = 24;                 // sentences shorter than this merge with the next
 const MAX_TAG = 220;
-const TAG_RE = /^\[\s*(POINT|CONF|DONE|NOTE|NEXT)\s*(?::([^\]]*))?\]/i;
+const TAG_RE = /^\[\s*(POINT|CONF|DONE|NOTE|NEXT|ANSWER)\s*(?::([^\]]*))?\]/i;
 const THINK_OPEN = /<\s*thinking\s*>/i, THINK_CLOSE = /<\s*\/\s*thinking\s*>/i;
 // Tool-call markup written out as text: nothing after it is spoken.
 const LEAK_RE = /<\s*(?:[\w-]+:)?(?:function_calls\s*>|invoke\s+name\s*=|parameter\s+name\s*=|tool_(?:use|call|code)\b)/i;
@@ -30,6 +30,7 @@ function parseTag(kind, body) {
   const k = kind.toUpperCase();
   const b = (body || '').trim();
   if (k === 'DONE') return { type: 'done' };
+  if (k === 'ANSWER') return { type: 'answer' };
   if (k === 'CONF') { const v = Number(b); return Number.isFinite(v) ? { type: 'conf', value: Math.max(0, Math.min(1, v)) } : null; }
   if (k === 'NOTE') return b ? { type: 'note', text: clip(b, 200) } : null;
   if (k === 'NEXT') {
@@ -182,8 +183,9 @@ class ReplyStream {
     const note = this.events.find((e) => e.type === 'note');
     const next = this.events.find((e) => e.type === 'next');
     const done = this.events.some((e) => e.type === 'done');
-    if (!instruction && !point && !done) return null;
-    return {
+    const answer = this.events.some((e) => e.type === 'answer');
+    if (!instruction && !point && !done && !answer) return null;
+    const out = {
       instruction,
       target: point ? point.target : null,
       confidence: conf ? conf.value : (point && point.target ? 0.75 : 0),
@@ -191,6 +193,8 @@ class ReplyStream {
       note: note ? note.text : '',
       next: next ? next.steps : [],
     };
+    if (answer) out.answer = true;
+    return out;
   }
 }
 

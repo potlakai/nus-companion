@@ -68,3 +68,9 @@ kbd{font:12px var(--mono);color:var(--marble);background:var(--fill-2);border:1p
 .account-consent{display:block;margin-top:10px;font-size:11px;color:var(--stone)}
 
 .tour-card{max-width:760px}.tour-card h3{margin-top:0}
+
+/* Settings, Voice: the microphone picker and its test meter (onboard-0120). */
+.mic-row { display: flex; gap: 8px; align-items: center; }
+.mic-row select { flex: 1; min-width: 0; }
+.mic-meter { height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; margin: 6px 0 2px; }
+.mic-meter i { display: block; height: 100%; width: 0; background: #b9f0cc; transition: width 80ms linear; }

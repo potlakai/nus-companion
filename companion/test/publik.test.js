@@ -93,19 +93,20 @@ test('publik offline and signed out read as plain words', () => {
 
 test('the gate window draws Publik\'s words exactly, with the Nūs lines above them', () => {
   const mod = require('../src/publik/publik');
-  const { view, INTRO, UPDATING, CHOICE_LINE } = require('../src/publik/gate-window');
+  const { view, WORDING, WORDING_PICK, UPDATING, CHOICE_LINE } = require('../src/publik/gate-window');
   const sign = mod.gateScreen('sign_in', null);
   const v = view(sign, { updating: true });
-  assert.equal(v.body, sign.body); assert.deepEqual(v.buttons.map((b) => b.label), ['Sign in with publik']);
-  assert.deepEqual(v.nus, [INTRO, UPDATING]);
-  assert.deepEqual(view(sign, { updating: false }).nus, [INTRO]);
+  assert.equal(v.title, sign.title); assert.equal(v.body, sign.body); assert.deepEqual(v.buttons.map((b) => b.label), ['Sign in with publik']);
+  const w = WORDING[WORDING_PICK];
+  assert.deepEqual(v.nus, [w.headline, w.line, w.callout, ...v.steps, UPDATING].filter(Boolean));
+  assert.equal(view(sign, { updating: false }).updating, '');
   const choose = view(mod.gateScreen('choose', { claim_state: 'claimed', account: null, plan: { kind: 'none', label: null }, balance_micros: 50000, top_up_url: 'x' }));
   assert.deepEqual(choose.buttons.map((b) => b.label), ['Connect your plan', 'Use my own key']);
-  assert.deepEqual(choose.nus, [CHOICE_LINE]);
+  assert.equal(choose.privacy, CHOICE_LINE);
   const off = view(mod.gateScreen('unreachable', null));
   assert.equal(off.body, 'publik is not reachable. Check your connection.');
   assert.deepEqual(off.buttons.map((b) => b.label), ['Retry']);
-  for (const line of [INTRO, UPDATING, CHOICE_LINE]) assert.doesNotMatch(line, /—/, 'no em dashes');
+  for (const line of [UPDATING, CHOICE_LINE]) assert.doesNotMatch(line, /—/, 'no em dashes');
 });
 
 test('big screenshots shrink under Publik\'s 4 MB limit only when needed', () => {

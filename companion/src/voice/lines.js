@@ -142,7 +142,19 @@ function createLineCache({ dir, voiceKey, synth, log = () => {}, keep = (line) =
     try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file(line), pcmToWav(a.pcm, a.sampleRate)); } catch (e) { log('line not saved: ' + e.message); }
     return true;
   }
-  function missing(lines = LINES) { return lines.filter((l) => !get(l)); }
+  // Is a line made already? Asked for every line at start and on every tour card, so it must
+  // not read the audio, or even open the files: reading all of them held the main thread for
+  // 150 ms (the short lines) to 730 ms (the tour's), measured 2026-11-11 with the lag recorder,
+  // and opening each one still cost about a millisecond apiece. One look at the file's size is
+  // enough: a line cut short by a crash is empty or tiny and is made again; anything else wrong
+  // with a file shows when the line is said, and saying it makes it again.
+  function has(line) {
+    const k = voiceKey();
+    if (!k || !line) return false;
+    if (mem.has(key(line))) return true;
+    try { return fs.statSync(file(line)).size > 44; } catch (_) { return false; }
+  }
+  function missing(lines = LINES) { return lines.filter((l) => !has(l)); }
   // Make every line that is not there yet, one at a time, behind live speech.
   // Live speech stops the voice, which cuts off the line being made (voice.stop,
   // and live 2026-11-03: every tour card did it, "0 made, 38 left"), so that line
@@ -180,7 +192,7 @@ function createLineCache({ dir, voiceKey, synth, log = () => {}, keep = (line) =
   }
   // The app is going away: no more lines, and no voice model reloaded for one.
   function cancel() { queue = []; }
-  return { get, put, missing, prerender, cancel, file };
+  return { get, put, has, missing, prerender, cancel, file };
 }
 
 module.exports = { ACKS, NEUTRAL_ACK, SMALL_TALK_LINES, LINES, ackForIntent, heardBack, smallTalk, createLineCache, readWav, fileName };

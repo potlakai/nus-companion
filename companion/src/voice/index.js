@@ -59,17 +59,46 @@ function download(url, file, onProgress, redirects = 0) {
   });
 }
 
-// Windows ships tar (libarchive) which reads .tar.bz2; Git's tar does too.
-function extract(archive, into) {
-  return new Promise((resolve, reject) => {
-    fs.mkdirSync(into, { recursive: true });
-    execFile('tar', ['-xjf', archive, '-C', into], { windowsHide: true, timeout: 600000 }, (e, _out, err) => (e ? reject(new Error('extract failed: ' + String(err || e.message).slice(0, 200))) : resolve()));
+// Unpacking the voice. Windows ships its own tar (System32, libarchive), which reads .tar.bz2
+// and takes C:\ paths. A plain "tar" is whichever comes first on the PATH, and on a PC with Git
+// or MSYS ahead of System32 that is GNU tar, which reads "C:" as the name of another computer:
+// "Cannot connect to C: resolve failed", and the voice never installs (found 2026-11-11 on a
+// first-run walk started from a Git shell; one user reported "voice would not download" with
+// no cause found). So Windows' own tar is called by its full path; the PATH's tar is the
+// fallback, first as it is, then told that C: is local.
+function tarAttempts({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+  const tries = [];
+  if (platform === 'win32') {
+    const own = path.join(env.SystemRoot || env.windir || 'C:\\Windows', 'System32', 'tar.exe');
+    if (exists(own)) tries.push({ file: own, extra: [] });
+  }
+  tries.push({ file: 'tar', extra: [] });
+  if (platform === 'win32') tries.push({ file: 'tar', extra: ['--force-local'] });
+  return tries;
+}
+function extract(archive, into, { run = execFile, attempts = tarAttempts() } = {}) {
+  fs.mkdirSync(into, { recursive: true });
+  const one = (t) => new Promise((resolve, reject) => {
+    run(t.file, [...t.extra, '-xjf', archive, '-C', into], { windowsHide: true, timeout: 600000 }, (e, _out, err) => (e ? reject(new Error('extract failed: ' + String(err || e.message).slice(0, 200))) : resolve()));
   });
+  return attempts.reduce((before, t) => before.catch(() => one(t)), Promise.reject(new Error('extract failed: no tar')));
 }
 
 // electron: process.execPath runs the worker with ELECTRON_RUN_AS_NODE (the
 // native addon is N-API, so it loads in Electron's Node as it does in Node).
-function createVoice({ userData, settings, log = () => {}, spawnFn = spawn, executable = process.execPath, now = () => Date.now(), onState = () => {} }) {
+// Fable ships inside the installer (Pranav, 2026-11-11: "the first word it says should already have
+// the fable voice ... it doesn't need the step of downloading the voice anymore"): electron-builder
+// copies vendor/voice/<folder> to resources/voice/<folder>. A dev run reads vendor/voice. The
+// download in install() stays only as a repair path for an install whose bundled copy is missing.
+function bundledRoots() {
+  const out = [];
+  if (process.resourcesPath) out.push(path.join(process.resourcesPath, 'voice'));
+  out.push(path.join(__dirname, '..', '..', '..', 'vendor', 'voice'));
+  return out;
+}
+function hasModel(d) { return fs.existsSync(path.join(d, 'voices.bin')) && (fs.existsSync(path.join(d, 'model.onnx')) || fs.existsSync(path.join(d, 'model.int8.onnx'))); }
+
+function createVoice({ userData, settings, log = () => {}, spawnFn = spawn, executable = process.execPath, now = () => Date.now(), onState = () => {}, bundled = bundledRoots() }) {
   const root = path.join(userData, 'voice');
   let worker = null, ready = null, seq = 0, idleTimer = null, loading = null;
   const pending = new Map();      // id -> { resolve, reject, at }
@@ -79,8 +108,13 @@ function createVoice({ userData, settings, log = () => {}, spawnFn = spawn, exec
   // 2026-11-03: the Windows voice is not the Knot's), the system voice before.
   function voiceName() { const s = settings.get(); if (s && s.voice) return String(s.voice); return installed(VOICES[DEFAULT_VOICE]) ? DEFAULT_VOICE : 'system'; }
   function wanted() { return VOICES[voiceName()] || null; }
-  function modelDir(v) { return path.join(root, MODELS[v.model].folder); }
-  function installed(v) { const d = modelDir(v); return fs.existsSync(path.join(d, 'voices.bin')) && (fs.existsSync(path.join(d, 'model.onnx')) || fs.existsSync(path.join(d, 'model.int8.onnx'))); }
+  // The bundled copy when it is there, else a downloaded one in the profile.
+  function modelDir(v) {
+    const folder = MODELS[v.model].folder;
+    for (const r of bundled || []) { const d = path.join(r, folder); if (hasModel(d)) return d; }
+    return path.join(root, folder);
+  }
+  function installed(v) { return hasModel(modelDir(v)); }
 
   function status() {
     const v = wanted();
@@ -176,7 +210,10 @@ function createVoice({ userData, settings, log = () => {}, spawnFn = spawn, exec
 
   function close() { stop(); clearTimeout(idleTimer); if (worker) { try { worker.kill(); } catch (_) { /* gone */ } worker = null; ready = null; loading = null; } }
 
-  return { status, install, warm, synth, stop, close, idle: () => !pending.size, VOICES, MODELS };
+  // One instance is made before the sign-in window (to load Fable while the person signs in) and
+  // handed to the companion, which sets its own listener here.
+  function setOnState(fn) { onState = typeof fn === 'function' ? fn : () => {}; announce(); }
+  return { status, install, warm, synth, stop, close, setOnState, modelDir: () => { const v = wanted(); return v ? modelDir(v) : ''; }, idle: () => !pending.size, VOICES, MODELS };
 }
 
-module.exports = { createVoice, VOICES, MODELS, DEFAULT_VOICE, IDLE_UNLOAD_MS, sha256File };
+module.exports = { createVoice, bundledRoots, VOICES, MODELS, DEFAULT_VOICE, IDLE_UNLOAD_MS, sha256File, extract, tarAttempts };

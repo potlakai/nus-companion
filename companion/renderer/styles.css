@@ -1036,6 +1036,10 @@ html:not(.standalone) [data-standalone-only]{display:none!important}
 .tr-mid:empty { display: none; }
 .tr-bars { width: 340px; max-width: 100%; height: 56px; }
 .tr-note { font-size: 11px; color: var(--tx-mut); }
+.tr-mics { display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
+.tr-mics:empty { display: none; }
+.tr-mic { text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.04); color: var(--tx-2); font: 600 12px var(--font); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-mic.on { border-color: #fff; color: #fff; background: rgba(255,255,255,.1); }
 .tr-keys { display: flex; gap: 8px; }
 .tr-keys kbd { min-width: 44px; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.35); font: 600 14px var(--font); color: #fff; text-align: center; }
 .tr-chip { padding: 7px 14px; border-radius: 999px; background: #fff; color: #0B1020; font-weight: 600; font-size: 13px; }

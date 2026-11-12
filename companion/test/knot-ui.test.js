@@ -121,7 +121,7 @@ test('touch: the Knot and the pill work from pointer events, a finger drags, a d
 });
 
 // ---- the touch pad ----
-const { createTouchPad, cleanRects, cleanEvent, TOUCH_LASTS_MS } = require('../src/touch-pad');
+const { createTouchPad, cleanRects, cleanEvent, shapeFor, isPlainRectangle, TOUCH_LASTS_MS } = require('../src/touch-pad');
 const { EventEmitter } = require('node:events');
 require('../renderer/touch-forward.js');
 
@@ -168,7 +168,9 @@ test('touch pad: cut to the controls, topmost from outside, standing aside for t
   g.pad.tick({ visible: true, allowed: true, cursor: AWAY });
   await g.settle();
   const w = g.made[0];
-  assert.deepEqual(w.log.find((l) => l[0] === 'shape')[1], KNOT);
+  // The Knot alone is one rectangle; the window's shape leaves one corner pixel out (next test).
+  assert.deepEqual(w.log.find((l) => l[0] === 'shape')[1], [{ x: 100, y: 100, width: 79, height: 1 }, { x: 100, y: 101, width: 80, height: 79 }]);
+  assert.equal(w.o.type, process.platform === 'win32' ? 'toolbar' : undefined, 'a tool window on Windows');
   assert.equal(w.ignoring, false, 'catching, with the cursor elsewhere');
   assert.equal(w.visible, true);
   assert.equal(g.calls.topmost, 4242);
@@ -188,6 +190,46 @@ test('touch pad: cut to the controls, topmost from outside, standing aside for t
   assert.equal(w.visible, false, 'an empty shape would mean the whole window, so no controls hides it');
   g.pad.close();
   assert.equal(w.dead, true);
+});
+
+// The freeze under a resting Knot (2026-11-11): a window shaped as one plain rectangle counts,
+// to Chrome, Electron apps and Firefox, as covering its whole frame (here the whole screen), and
+// they stop drawing under it. The live check is scripts/lag/rest-freeze.cjs check.
+test('touch pad: the shape is never one plain rectangle', () => {
+  const area = (rects) => { let n = 0; const seen = new Set(); for (const r of rects) for (let x = r.x; x < r.x + r.width; x++) for (let y = r.y; y < r.y + r.height; y++) { const k = x + ',' + y; if (!seen.has(k)) { seen.add(k); n++; } } return n; };
+  // The Knot alone: one pixel short of its rectangle, and not a rectangle any more.
+  const alone = shapeFor(KNOT);
+  assert.equal(isPlainRectangle(KNOT), true);
+  assert.equal(isPlainRectangle(alone), false);
+  assert.equal(area(alone), 80 * 80 - 1);
+  // The Knot and a bubble apart from it: already not a rectangle, left exactly as it is.
+  const two = [KNOT[0], { x: 300, y: 40, width: 200, height: 60 }];
+  assert.equal(isPlainRectangle(two), false);
+  assert.strictEqual(shapeFor(two), two);
+  // Pieces that add up to one rectangle are caught too: side by side, overlapping, or one inside another.
+  for (const made of [
+    [{ x: 0, y: 0, width: 40, height: 50 }, { x: 40, y: 0, width: 40, height: 50 }],
+    [{ x: 0, y: 0, width: 50, height: 50 }, { x: 30, y: 0, width: 50, height: 50 }],
+    [{ x: 0, y: 0, width: 80, height: 50 }, { x: 60, y: 0, width: 20, height: 10 }],
+  ]) {
+    assert.equal(isPlainRectangle(made), true);
+    const out = shapeFor(made);
+    assert.equal(isPlainRectangle(out), false, JSON.stringify(made));
+    assert.equal(area(out), area(made) - 1, 'exactly one pixel is left out');
+  }
+  // An L is not a rectangle; a single pixel has nothing to leave out.
+  assert.equal(isPlainRectangle([{ x: 0, y: 0, width: 10, height: 30 }, { x: 0, y: 20, width: 30, height: 10 }]), false);
+  assert.deepEqual(shapeFor([{ x: 5, y: 5, width: 1, height: 1 }]), [{ x: 5, y: 5, width: 1, height: 1 }]);
+  assert.deepEqual(shapeFor([]), []);
+});
+
+test('touch pad: every shape it sets while the controls change stays clear of a plain rectangle', async () => {
+  const g = padRig();
+  const shown = [KNOT, [KNOT[0], { x: 300, y: 40, width: 200, height: 60 }], KNOT, [{ x: 0, y: 0, width: 1920, height: 40 }], [{ x: 10, y: 10, width: 40, height: 40 }, { x: 50, y: 10, width: 40, height: 40 }]];
+  for (const rects of shown) { g.pad.setRects(rects); g.pad.tick({ visible: true, allowed: true, cursor: AWAY }); await g.settle(); g.pad.tick({ visible: true, allowed: true, cursor: AWAY }); }
+  const shapes = g.made[0].log.filter((l) => l[0] === 'shape').map((l) => l[1]);
+  assert.equal(shapes.length, shown.length);
+  for (const s of shapes) assert.equal(isPlainRectangle(s), false, JSON.stringify(s));
 });
 
 test('touch pad: a finger keeps it catching with the cursor parked on a control, until a mouse moves', async () => {

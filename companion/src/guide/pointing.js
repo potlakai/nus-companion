@@ -32,6 +32,10 @@ const SYSTEM = [
   'Then, optionally: [CONF:<0..1>] how sure you are of the pick (always give it); [DONE] when the goal is reached; [NOTE:<one short sentence>] only when the point is none or the click is irreversible.',
   'No code fences, no JSON, nothing after the tags.',
   '',
+  'First decide: is the goal something to click or do, or a question about the screen?',
+  '- A question about the screen ("summarize this", "what does this say", "explain this error", "what do you see", "is this right") is not yours to point at. Reply with exactly [ANSWER] and nothing else. Another part of Nūs answers it.',
+  '- Never tell the user to type their question or request into a text box, a chat, a search box or another assistant. If that is the only step you can think of, reply [ANSWER].',
+  '',
   'Rules:',
   '- Prefer an id from the list. Use a box only when the control is clearly visible but not in the list. Use none when you are not sure which control it is.',
   '- Many apps (video editors, games, apps with custom toolbars) list few or no controls. Then use a bbox with the label you can read on the control. Never give up on the goal because the list is empty.',
@@ -120,6 +124,8 @@ function sanitizePlan(next) {
 function validatePoint(reply, elements, opts = {}) {
   const verified = opts.verified !== false; // a probe is there to check bboxes
   if (!reply || typeof reply !== 'object') return { ok: false, reason: 'no reply' };
+  // [ANSWER]: the goal was a question, not a click. The session answers it.
+  if (reply.answer === true) return { ok: true, reason: 'answer', reply: { instruction: clip(reply.instruction, MAX_INSTRUCTION), target: null, confidence: 0, done: false, note: '', next: [], answer: true } };
   const out = {
     instruction: clip(reply.instruction, MAX_INSTRUCTION),
     target: null,

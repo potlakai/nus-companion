@@ -1,6 +1,6 @@
 {
   "name": "nus-companion",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Nūs Companion: ask about your screen by voice or text. The Knot points, guides and can act.",
   "main": "src/main-companion.js",
   "private": true,

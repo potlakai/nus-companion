@@ -28,7 +28,7 @@ function rig({ voice = 'fable', installed = true } = {}) {
   const spawned = [];
   const states = [];
   const settings = { voice };
-  const v = createVoice({ userData, settings: { get: () => settings }, spawnFn: () => { const w = fakeWorker(); spawned.push(w); return w; }, executable: 'electron', log: () => {}, onState: (s) => states.push(s) });
+  const v = createVoice({ userData, settings: { get: () => settings }, spawnFn: () => { const w = fakeWorker(); spawned.push(w); return w; }, executable: 'electron', log: () => {}, onState: (s) => states.push(s), bundled: [] });
   return { v, spawned, states, settings };
 }
 
@@ -85,4 +85,26 @@ test('install is skipped when the files are already there, and the model table i
 
 test('the voice stays loaded through a 30 minute break, not five', () => {
   assert.equal(IDLE_UNLOAD_MS, 30 * 60 * 1000);
+});
+
+// Unpacking the voice (2026-11-11): a plain "tar" on a PC with Git or MSYS first on the PATH is
+// GNU tar, which reads "C:" as another computer and fails, so the voice never installed there.
+// The live check is scripts/lag/unpack-check.cjs.
+test('the voice is unpacked with Windows\' own tar first, and the PATH\'s tar only as a fallback', async () => {
+  const { extract, tarAttempts } = require('../src/voice');
+  const own = path.join('C:\Windows', 'System32', 'tar.exe');
+  const win = tarAttempts({ platform: 'win32', env: { SystemRoot: 'C:\Windows' }, exists: (p) => p === own });
+  assert.deepEqual(win, [{ file: own, extra: [] }, { file: 'tar', extra: [] }, { file: 'tar', extra: ['--force-local'] }]);
+  assert.deepEqual(tarAttempts({ platform: 'win32', env: {}, exists: () => false }), [{ file: 'tar', extra: [] }, { file: 'tar', extra: ['--force-local'] }], 'no tar in System32: the PATH, then told C: is local');
+  assert.deepEqual(tarAttempts({ platform: 'darwin', env: {}, exists: () => true }), [{ file: 'tar', extra: [] }]);
+  // It stops at the first that works, and says why when none does.
+  const into = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-unpack-'));
+  const calls = [];
+  const gnuFirst = (file, args, _o, cb) => { calls.push([file, args[0]]); cb(args[0] === '--force-local' ? null : new Error('x'), '', args[0] === '--force-local' ? '' : 'tar (child): Cannot connect to C: resolve failed'); };
+  await extract('C:\v\voice.tar.bz2', into, { run: gnuFirst, attempts: tarAttempts({ platform: 'win32', env: {}, exists: () => false }) });
+  assert.deepEqual(calls, [['tar', '-xjf'], ['tar', '--force-local']]);
+  calls.length = 0;
+  await extract('C:\v\voice.tar.bz2', into, { run: (file, args, _o, cb) => { calls.push(file); cb(null, '', ''); }, attempts: win });
+  assert.deepEqual(calls, [own], 'the first one worked: nothing else is tried');
+  await assert.rejects(() => extract('C:\v\voice.tar.bz2', into, { run: (_f, _a, _o, cb) => cb(new Error('x'), '', 'no such archive'), attempts: win }), /extract failed: no such archive/);
 });
