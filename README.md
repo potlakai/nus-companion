@@ -2,15 +2,22 @@
 
 Ask about your screen by voice or text. The Knot points, guides and can act.
 
+![The first run: Nūs opens Notepad and types a hello, then the Knot says hi from the corner of the screen](https://raw.githubusercontent.com/potlakai/nus-companion/main/docs/first-run.png)
+
+The first time you start it, Nūs opens Notepad, types this, and the Knot says
+hello from the corner of your screen.
+
 The Nūs Companion is a Windows app (Electron). The Knot sits on your screen.
-Hold a key and ask about what you see, and it answers, points at the right
+Hold Ctrl+Alt and ask about what you see, and it answers, points at the right
 place, walks you through it step by step, or does it for you with Hands.
 
 ## Get it
 
-Download the installer from the latest release of this repo, or from
-https://potlakai.github.io/nus. Windows 10 and 11, x64. The installer is not
-code-signed yet, so Windows SmartScreen may ask you to confirm.
+Download the installer from the
+[latest release](https://github.com/potlakai/nus-companion/releases/latest),
+from https://publikhq.com/nus, or from https://potlakai.github.io/nus.
+Windows 10 and 11, x64. The installer is not code-signed yet, so Windows
+SmartScreen may ask you to confirm.
 
 ## Who answers
 
