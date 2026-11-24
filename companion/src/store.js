@@ -123,7 +123,7 @@ const DEFAULTS = {
   // it off from the desktop Knot pane is the only thing that removes it, and
   // that choice persists until the user turns it back on.
   companionEnabled: true,
-  apiKeys: { openai: '', anthropic: '', gemini: '', nvidia: '', typesafe: '' },
+  apiKeys: { openai: '', anthropic: '', gemini: '', nvidia: '', typesafe: '', ollama: '' },
   models: {
     openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
     anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-sonnet-5' },
@@ -134,7 +134,9 @@ const DEFAULTS = {
     // life"), the 11b before it, so every ask on an Nvidia key failed. Nemotron 3.5 Super VL is
     // Nvidia's own vision model (GA 2026-10-15, no end date listed); both tiers use it. It thinks
     // by default, so llm.js sends reasoning_effort "none" with it (nvidiaArgs).
-    nvidia: { fast: 'nvidia/nemotron-3.5-super-vl-120b-a12b', smart: 'nvidia/nemotron-3.5-super-vl-120b-a12b' }
+    nvidia: { fast: 'nvidia/nemotron-3.5-super-vl-120b-a12b', smart: 'nvidia/nemotron-3.5-super-vl-120b-a12b' },
+    // Local models run through Ollama's OpenAI-compatible API at localhost:11434.
+    ollama: { fast: 'llama3.2', smart: 'llama3.1' }
   }
 };
 
@@ -285,7 +287,7 @@ function load() {
 // Also run on every save, so a key pasted in Home answers without a restart.
 function pickKeyedProvider(d) {
   if (d.apiKeys[d.provider]) return;
-  const validProviders = ['openai', 'anthropic', 'gemini', 'nvidia'];
+  const validProviders = ['openai', 'anthropic', 'gemini', 'nvidia', 'ollama'];
   const active = validProviders.find(p => d.apiKeys[p]);
   if (active) d.provider = active;
 }

@@ -14,15 +14,17 @@ function stripDataUrl(dataUrl) {
 // text has arrived, that long without a new token ends the call with the text.
 // extra: fields one provider needs in the request body and others would refuse (Nvidia's
 // Nemotron takes reasoning_effort; see nvidiaArgs).
-async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, baseURL, signal, idleAfterTextMs, extra }) {
+async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken = () => {}, baseURL, signal, idleAfterTextMs, extra }) {
   if (idleAfterTextMs > 0) return streamUntilIdle({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, baseURL, signal, extra }, idleAfterTextMs);
   if (DEBUG) console.log('[DEBUG LLM] streamOpenAI called', { model, baseURL, hasImage: !!imageDataUrl, maxTokens });
   const OpenAI = require('openai');
   const client = new OpenAI({ apiKey, baseURL });
   const messages = [{ role: 'system', content: system }];
+  let imageAttached = false;
   turns.forEach((t, i) => {
     const last = i === turns.length - 1;
     if (last && imageDataUrl && t.role === 'user') {
+      imageAttached = true;
       messages.push({ role: 'user', content: [
         { type: 'text', text: t.text },
         { type: 'image_url', image_url: { url: imageDataUrl } }
@@ -31,6 +33,9 @@ async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTok
       messages.push({ role: t.role, content: t.text });
     }
   });
+  if (imageDataUrl && !imageAttached) {
+    messages.push({ role: 'user', content: [{ type: 'image_url', image_url: { url: imageDataUrl } }] });
+  }
   if (DEBUG) console.log('[DEBUG LLM] streamOpenAI sending request to OpenAI SDK with messages count:', messages.length);
   try {
     // signal: a stop (Esc, "stop") closes the stream instead of letting the
@@ -133,6 +138,11 @@ async function streamGemini({ apiKey, model, system, turns, imageDataUrl, maxTok
     }
     return { role: t.role === 'assistant' ? 'model' : 'user', parts };
   });
+  const hasImage = contents.some((c) => (c.parts || []).some((p) => p.inlineData));
+  if (imageDataUrl && !hasImage) {
+    const img = stripDataUrl(imageDataUrl);
+    if (img) contents.push({ role: 'user', parts: [{ inlineData: { mimeType: img.mime, data: img.b64 } }] });
+  }
   if (DEBUG) console.log('[DEBUG LLM] streamGemini sending request to Google SDK with contents count:', contents.length);
   try {
     const config = { systemInstruction: system };
@@ -283,7 +293,7 @@ function createLLM(settings, opts = {}) {
   const keys = settings.apiKeys || {};
   const apiKey = envClaude ? process.env.ANTHROPIC_API_KEY : keys[provider];
   const tier = settings.smart ? 'smart' : 'fast';
-  const model = envClaude ? (process.env.NUS_COMPANION_CLAUDE_MODEL || 'claude-sonnet-5') : (settings.models[provider] || {})[tier];
+  const model = envClaude ? (process.env.NUS_COMPANION_CLAUDE_MODEL || 'claude-sonnet-5') : ((settings.models || {})[provider] || {})[tier];
 
   // Set to 4096 (effectively unlimited for a single response) 
   // since some SDKs like Anthropic require a maxTokens value.
@@ -299,11 +309,12 @@ function createLLM(settings, opts = {}) {
       const args = { apiKey, model, maxTokens, ...paramsWithComputer(params) };
       if (provider === 'openai') return streamOpenAI(args);
       if (provider === 'nvidia') return streamOpenAI(nvidiaArgs(args));
+      if (provider === 'ollama') return streamOpenAI({ ...args, baseURL: 'http://localhost:11434/v1' });
       if (provider === 'anthropic') return streamAnthropic(args);
       if (provider === 'gemini') return geminiStream(args);
       throw new Error('unknown provider: ' + provider);
     },
-    async complete(params) {
+    async complete(params = {}) {
       // params.model: one call on another model of the same provider (a problem
       // walkthrough wants the smart tier). Unset leaves the configured one.
       // params.onDelta: streamed text for callers that can use it as it arrives.
@@ -312,6 +323,7 @@ function createLLM(settings, opts = {}) {
       // The other SDKs stream fine; collect and return.
       if (provider === 'openai') return streamOpenAI(args);
       if (provider === 'nvidia') return streamOpenAI(nvidiaArgs(args));
+      if (provider === 'ollama') return streamOpenAI({ ...args, baseURL: 'http://localhost:11434/v1' });
       if (provider === 'anthropic') return streamAnthropic(args);
       throw new Error('unknown provider: ' + provider);
     }
